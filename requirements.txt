@@ -5,3 +5,5 @@ python-multipart
 pillow
 rembg[cpu]
 spaces
+torch
+torchvision
