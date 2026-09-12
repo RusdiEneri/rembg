@@ -1,37 +1,62 @@
 import gradio as gr
 import spaces
-from transparent_background import Remover
-from PIL import Image
 import numpy as np
+from PIL import Image
+from rembg import remove, new_session
 
-# Inisialisasi model saat startup (akan otomatis pakai GPU di ZeroGPU)
-remover = Remover(mode='base')
+# Cache model agar tidak download berulang kali
+_SESSIONS = {}
 
-@spaces.GPU(duration=60)  # Alokasi GPU selama 60 detik per request
-def remove_bg(img):
+def get_session(model_name: str):
+    if model_name not in _SESSIONS:
+        print(f"[INFO] Sedang download/load model: {model_name} ...")
+        _SESSIONS[model_name] = new_session(model_name)
+    return _SESSIONS[model_name]
+
+@spaces.GPU(duration=60)
+def remove_bg(img, model_name, alpha_matting):
     if img is None:
         return None
-    
-    # transparent-background butuh format RGB
-    if isinstance(img, np.ndarray):
-        img = Image.fromarray(img)
-    
-    img_rgb = img.convert("RGB")
-    
-    # Proses hapus background (kembalikan PNG transparan)
-    output = remover.process(img_rgb, type='rgba')
-    return output
 
-# Buat Interface Gradio Murni
+    if not isinstance(img, Image.Image):
+        img = Image.fromarray(np.uint8(img))
+    img = img.convert("RGB")
+
+    session = get_session(model_name)
+
+    kwargs = {}
+    if alpha_matting:
+        kwargs.update(
+            alpha_matting=True,
+            alpha_matting_foreground_threshold=240,
+            alpha_matting_background_threshold=10,
+            alpha_matting_erode_size=10,
+        )
+
+    # Hasil: PIL mode RGBA (background transparan, RGB subjek UTUH)
+    return remove(img, session=session, **kwargs)
+
 demo = gr.Interface(
     fn=remove_bg,
-    inputs=gr.Image(type="pil", label="Upload Gambar"),
+    inputs=[
+        gr.Image(type="pil", label="Upload Gambar"),
+        gr.Dropdown(
+            choices=[
+                "birefnet-portrait",   # TERBAIK untuk foto orang
+                "birefnet-general",    # TERBAIK untuk objek umum/produk
+                "isnet-general-use",   # Seimbang: cepat & bagus
+                "u2net_human_seg",     # Ringan untuk orang
+            ],
+            value="birefnet-portrait",
+            label="Model AI",
+        ),
+        gr.Checkbox(value=False, label="Alpha Matting (haluskan edge rambut)"),
+    ],
     outputs=gr.Image(type="pil", label="Hasil (PNG Transparan)"),
     title="Remove Background API",
-    description="Backend untuk Vercel. Endpoint API: /api/remove_bg",
-    api_name="remove_bg"  # PENTING: Ini membuat endpoint API otomatis
+    description="Backend untuk Vercel. Endpoint: /api/remove_bg",
+    api_name="remove_bg",
 )
 
 if __name__ == "__main__":
-    # Jangan pakai FastAPI, biarkan Gradio berjalan native
     demo.launch()
