@@ -3,7 +3,5 @@ fastapi
 uvicorn
 python-multipart
 pillow
-rembg[cpu]
 spaces
-torch
-torchvision
+transparent-background
