@@ -1,4 +1,6 @@
+gradio
 fastapi
 uvicorn
 python-multipart
+pillow
 rembg[cpu]
