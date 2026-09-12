@@ -1,7 +1,4 @@
 gradio
-fastapi
-uvicorn
-python-multipart
-pillow
-spaces
 transparent-background
+spaces
+pillow
