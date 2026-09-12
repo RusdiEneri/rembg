@@ -4,3 +4,4 @@ uvicorn
 python-multipart
 pillow
 rembg[cpu]
+spaces
