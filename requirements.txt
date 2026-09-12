@@ -1,4 +1,6 @@
 gradio
-transparent-background
 spaces
 pillow
+numpy
+rembg[cpu]
+pymatting
