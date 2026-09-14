@@ -1,6 +1,10 @@
+# pyrefly: ignore [missing-import]
 import gradio as gr
+# pyrefly: ignore [missing-import]
 import spaces
+# pyrefly: ignore [missing-import]
 import numpy as np
+# pyrefly: ignore [missing-import]
 from PIL import Image
 from rembg import remove, new_session
 
@@ -59,4 +63,7 @@ demo = gr.Interface(
 )
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(
+        server_name="0.0.0.0",
+        show_api=True,
+    )
