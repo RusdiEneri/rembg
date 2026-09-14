@@ -1,17 +1,14 @@
 /**
  * API Route: /api/remove-bg
  *
- * Flow Gradio 4+ yang benar:
- *   1. Upload gambar ke POST /upload → dapat temp file path
- *   2. POST ke /call/remove_bg dengan file path → dapat event_id
- *   3. GET SSE stream /call/remove_bg/{event_id} → parse hasil
- *   4. Fetch gambar hasil → kirim sebagai base64 ke frontend
+ * Fix untuk Gradio 6+ dengan SSR mode (Node proxy):
+ * - /upload endpoint TIDAK tersedia (404) di SSR mode
+ * - Kirim gambar sebagai base64 langsung dalam format ImageData Gradio 6
+ * - Format: { path: "data:mime;base64,...", orig_name, mime_type, size, meta }
  */
 
 const HF_SPACE_URL = process.env.NEXT_PUBLIC_HF_SPACE_URL || 'https://ilhamdev-rembg.hf.space'
-
-// Timeout untuk SSE stream (60 detik)
-const TIMEOUT_MS = 60_000
+const TIMEOUT_MS = 90_000  // 90 detik (ZeroGPU bisa cold start)
 
 export async function POST(request) {
   try {
@@ -24,159 +21,173 @@ export async function POST(request) {
       return Response.json({ error: 'No image provided' }, { status: 400 })
     }
 
-    // ── STEP 1: Upload gambar ke HuggingFace ──────────────────────────────
-    const uploadForm = new FormData()
-    const blob = new Blob([await imageFile.arrayBuffer()], { type: imageFile.type || 'image/png' })
-    uploadForm.append('files', blob, imageFile.name || 'image.png')
+    // ── STEP 1: Konversi gambar ke base64 ─────────────────────────────────
+    const arrayBuffer = await imageFile.arrayBuffer()
+    const base64 = Buffer.from(arrayBuffer).toString('base64')
+    const mimeType = imageFile.type || 'image/png'
+    const dataUrl = `data:${mimeType};base64,${base64}`
+    const fileName = imageFile.name || 'image.png'
+    const fileSize = arrayBuffer.byteLength
 
-    const uploadRes = await fetch(`${HF_SPACE_URL}/upload`, {
-      method: 'POST',
-      body: uploadForm,
-    })
-
-    if (!uploadRes.ok) {
-      const errText = await uploadRes.text()
-      console.error('[Upload Error]', uploadRes.status, errText)
-      return Response.json(
-        { error: `Gagal upload ke HuggingFace: ${uploadRes.status}` },
-        { status: 502 }
-      )
+    // Format ImageData sesuai Gradio 6 (tanpa perlu /upload dulu)
+    const imageData = {
+      path: dataUrl,
+      url: dataUrl,
+      orig_name: fileName,
+      mime_type: mimeType,
+      size: fileSize,
+      is_stream: false,
+      meta: { _type: 'gradio.FileData' },
     }
 
-    // Respons berupa array path: ["/tmp/gradio/xxx/image.png"]
-    const uploadedPaths = await uploadRes.json()
-    const filePath = uploadedPaths[0]
-
-    if (!filePath) {
-      return Response.json({ error: 'Upload berhasil tapi path kosong' }, { status: 502 })
-    }
-
-    // ── STEP 2: Call /call/remove_bg → dapat event_id ────────────────────
+    // ── STEP 2: POST ke /call/remove_bg ──────────────────────────────────
     const callPayload = {
-      data: [
-        { path: filePath },  // Gradio 4 menerima object {path}
-        modelName,
-        alphaMatting,
-      ]
+      data: [imageData, modelName, alphaMatting],
     }
 
-    const callRes = await fetch(`${HF_SPACE_URL}/call/remove_bg`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(callPayload),
-    })
+    const callController = new AbortController()
+    const callTimer = setTimeout(() => callController.abort(), 30_000)
+
+    let callRes
+    try {
+      callRes = await fetch(`${HF_SPACE_URL}/call/remove_bg`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify(callPayload),
+        signal: callController.signal,
+      })
+    } finally {
+      clearTimeout(callTimer)
+    }
 
     if (!callRes.ok) {
       const errText = await callRes.text()
-      console.error('[Call Error]', callRes.status, errText)
+      console.error('[Call Error]', callRes.status, errText.slice(0, 300))
       return Response.json(
-        { error: `Gagal panggil API HuggingFace: ${callRes.status} — ${errText.slice(0, 200)}` },
+        { error: `Gagal panggil HuggingFace API: ${callRes.status} — ${errText.slice(0, 150)}` },
         { status: 502 }
       )
     }
 
-    const { event_id } = await callRes.json()
+    const callJson = await callRes.json()
+    const event_id = callJson.event_id
+
     if (!event_id) {
-      return Response.json({ error: 'Tidak mendapat event_id dari HuggingFace' }, { status: 502 })
+      console.error('[No event_id]', callJson)
+      return Response.json({ error: 'HuggingFace tidak mengembalikan event_id' }, { status: 502 })
     }
 
-    // ── STEP 3: Baca SSE stream dari /call/remove_bg/{event_id} ──────────
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+    // ── STEP 3: Baca SSE stream hasil ─────────────────────────────────────
+    const sseController = new AbortController()
+    const sseTimer = setTimeout(() => sseController.abort(), TIMEOUT_MS)
 
-    const sseRes = await fetch(`${HF_SPACE_URL}/call/remove_bg/${event_id}`, {
-      signal: controller.signal,
-    })
-
-    clearTimeout(timer)
+    let sseRes
+    try {
+      sseRes = await fetch(`${HF_SPACE_URL}/call/remove_bg/${event_id}`, {
+        headers: { Accept: 'text/event-stream' },
+        signal: sseController.signal,
+      })
+    } finally {
+      clearTimeout(sseTimer)
+    }
 
     if (!sseRes.ok) {
       return Response.json(
-        { error: `Gagal membaca hasil dari HuggingFace: ${sseRes.status}` },
+        { error: `Gagal membaca hasil SSE: ${sseRes.status}` },
         { status: 502 }
       )
     }
 
-    // Parse SSE — cari event "complete" dengan data hasil
+    // Parse SSE — cari event "complete"
     const sseText = await sseRes.text()
-    let resultData = null
-    let hasError = false
-    let errorMsg = ''
+    console.log('[SSE Raw]', sseText.slice(0, 500))
 
+    let resultData = null
+    let errorMsg = null
     const lines = sseText.split('\n')
     let currentEvent = ''
 
     for (const line of lines) {
-      if (line.startsWith('event: ')) {
-        currentEvent = line.slice(7).trim()
-      } else if (line.startsWith('data: ')) {
-        const rawData = line.slice(6).trim()
-
+      const trimmed = line.trim()
+      if (trimmed.startsWith('event: ')) {
+        currentEvent = trimmed.slice(7).trim()
+      } else if (trimmed.startsWith('data: ')) {
+        const raw = trimmed.slice(6).trim()
         if (currentEvent === 'error') {
-          hasError = true
-          errorMsg = rawData
+          errorMsg = raw
           break
         }
-
         if (currentEvent === 'complete') {
           try {
-            const parsed = JSON.parse(rawData)
+            const parsed = JSON.parse(raw)
             if (Array.isArray(parsed) && parsed.length > 0) {
               resultData = parsed[0]
             }
           } catch {
-            // skip
+            console.error('[SSE parse error]', raw.slice(0, 100))
           }
         }
       }
     }
 
-    if (hasError) {
-      return Response.json({ error: `HuggingFace error: ${errorMsg}` }, { status: 502 })
+    if (errorMsg) {
+      return Response.json({ error: `Gradio error: ${errorMsg}` }, { status: 502 })
     }
 
     if (!resultData) {
-      return Response.json({ error: 'Tidak ada data hasil dari HuggingFace' }, { status: 502 })
+      return Response.json(
+        { error: 'Tidak ada data hasil dari HuggingFace. Coba lagi setelah beberapa detik.' },
+        { status: 502 }
+      )
     }
 
-    // ── STEP 4: Fetch gambar hasil → kembalikan sebagai base64 ───────────
-    // resultData.url atau resultData.path
-    let imgUrl = resultData.url || resultData.path || resultData
+    // ── STEP 4: Ambil gambar hasil sebagai base64 ─────────────────────────
+    // resultData bisa berupa { path, url } — path bisa relatif atau absolute
+    let imgUrl = resultData.url || resultData.path
 
-    // Jika path relatif, tambahkan base URL
-    if (typeof imgUrl === 'string' && !imgUrl.startsWith('http')) {
+    if (!imgUrl) {
+      return Response.json({ error: 'Tidak ada URL gambar hasil' }, { status: 502 })
+    }
+
+    // Jika path relatif (misal: /tmp/gradio/xxx/image.png)
+    if (!imgUrl.startsWith('http') && !imgUrl.startsWith('data:')) {
       imgUrl = `${HF_SPACE_URL}/file=${imgUrl}`
     }
 
-    const imgRes = await fetch(imgUrl)
-    if (!imgRes.ok) {
-      // Coba format URL alternatif HF
-      const altUrl = `${HF_SPACE_URL}/file=${resultData.path || resultData}`
-      const altRes = await fetch(altUrl)
-      if (!altRes.ok) {
-        return Response.json({ error: 'Gagal mengambil gambar hasil' }, { status: 502 })
-      }
-      const arrayBuffer = await altRes.arrayBuffer()
-      const base64 = Buffer.from(arrayBuffer).toString('base64')
-      return Response.json({
-        success: true,
-        image: `data:image/png;base64,${base64}`,
-      })
+    // Jika sudah base64 data URL, langsung kembalikan
+    if (imgUrl.startsWith('data:')) {
+      return Response.json({ success: true, image: imgUrl })
     }
 
-    const arrayBuffer = await imgRes.arrayBuffer()
-    const base64 = Buffer.from(arrayBuffer).toString('base64')
+    // Fetch gambar dari HF (server-side, tidak ada CORS issue)
+    const imgRes = await fetch(imgUrl)
+    if (!imgRes.ok) {
+      return Response.json(
+        { error: `Gagal fetch gambar hasil dari HuggingFace: ${imgRes.status}` },
+        { status: 502 }
+      )
+    }
+
+    const imgBuffer = await imgRes.arrayBuffer()
+    const imgBase64 = Buffer.from(imgBuffer).toString('base64')
+    const imgMime = imgRes.headers.get('content-type') || 'image/png'
 
     return Response.json({
       success: true,
-      image: `data:image/png;base64,${base64}`,
+      image: `data:${imgMime};base64,${imgBase64}`,
     })
 
-  } catch (error) {
-    if (error.name === 'AbortError') {
-      return Response.json({ error: 'Timeout: proses terlalu lama (>60 detik)' }, { status: 504 })
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      return Response.json(
+        { error: 'Timeout: proses terlalu lama. ZeroGPU mungkin sedang cold start, coba lagi.' },
+        { status: 504 }
+      )
     }
-    console.error('[API Error]', error)
-    return Response.json({ error: error.message }, { status: 500 })
+    console.error('[API Error]', err)
+    return Response.json({ error: err.message }, { status: 500 })
   }
 }
