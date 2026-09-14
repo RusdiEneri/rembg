@@ -7,8 +7,41 @@ import numpy as np
 # pyrefly: ignore [missing-import]
 from PIL import Image
 from rembg import remove, new_session
+import uuid
+import os
+import io
+from fastapi import FastAPI, File, UploadFile
+from fastapi.responses import JSONResponse
 
-# Cache model agar tidak download berulang kali
+# ── Custom FastAPI app (di-mount ke Gradio) ───────────────────────────────────
+# Digunakan sebagai endpoint upload untuk Vercel frontend.
+# Gradio menerima file input hanya via URL publik — bukan base64.
+app_fastapi = FastAPI()
+
+# Folder sementara untuk simpan file upload
+UPLOAD_DIR = "/tmp/rembg_uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+@app_fastapi.post("/custom/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """
+    Upload gambar dan kembalikan URL publik yang bisa dipakai oleh Gradio API.
+    URL format: https://ilhamdev-rembg.hf.space/file=/tmp/rembg_uploads/{filename}
+    """
+    ext = os.path.splitext(file.filename or "image.png")[1] or ".png"
+    unique_name = f"{uuid.uuid4().hex}{ext}"
+    save_path = os.path.join(UPLOAD_DIR, unique_name)
+
+    content = await file.read()
+    with open(save_path, "wb") as f:
+        f.write(content)
+
+    # URL yang bisa diakses publik via Gradio file serving
+    file_url = f"https://ilhamdev-rembg.hf.space/file={save_path}"
+    return JSONResponse({"url": file_url, "path": save_path})
+
+
+# ── Cache model ───────────────────────────────────────────────────────────────
 _SESSIONS = {}
 
 def get_session(model_name: str):
@@ -62,5 +95,9 @@ demo = gr.Interface(
     api_name="remove_bg",
 )
 
+# Mount FastAPI custom ke Gradio agar /custom/upload tersedia
+app = gr.mount_gradio_app(app_fastapi, demo, path="/")
+
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0")
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=7860)
