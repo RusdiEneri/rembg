@@ -4,6 +4,3 @@ pillow
 numpy
 rembg[cpu]
 pymatting
-fastapi
-uvicorn
-python-multipart

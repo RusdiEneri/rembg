@@ -7,39 +7,8 @@ import numpy as np
 # pyrefly: ignore [missing-import]
 from PIL import Image
 from rembg import remove, new_session
-import uuid
-import os
+import base64
 import io
-from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import JSONResponse
-
-# ── Custom FastAPI app (di-mount ke Gradio) ───────────────────────────────────
-# Digunakan sebagai endpoint upload untuk Vercel frontend.
-# Gradio menerima file input hanya via URL publik — bukan base64.
-app_fastapi = FastAPI()
-
-# Folder sementara untuk simpan file upload
-UPLOAD_DIR = "/tmp/rembg_uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
-@app_fastapi.post("/custom/upload")
-async def upload_file(file: UploadFile = File(...)):
-    """
-    Upload gambar dan kembalikan URL publik yang bisa dipakai oleh Gradio API.
-    URL format: https://ilhamdev-rembg.hf.space/file=/tmp/rembg_uploads/{filename}
-    """
-    ext = os.path.splitext(file.filename or "image.png")[1] or ".png"
-    unique_name = f"{uuid.uuid4().hex}{ext}"
-    save_path = os.path.join(UPLOAD_DIR, unique_name)
-
-    content = await file.read()
-    with open(save_path, "wb") as f:
-        f.write(content)
-
-    # URL yang bisa diakses publik via Gradio file serving
-    file_url = f"https://ilhamdev-rembg.hf.space/file={save_path}"
-    return JSONResponse({"url": file_url, "path": save_path})
-
 
 # ── Cache model ───────────────────────────────────────────────────────────────
 _SESSIONS = {}
@@ -50,17 +19,9 @@ def get_session(model_name: str):
         _SESSIONS[model_name] = new_session(model_name)
     return _SESSIONS[model_name]
 
-@spaces.GPU(duration=60)
-def remove_bg(img, model_name, alpha_matting):
-    if img is None:
-        return None
-
-    if not isinstance(img, Image.Image):
-        img = Image.fromarray(np.uint8(img))
+def process_image(img: Image.Image, model_name: str, alpha_matting: bool) -> Image.Image:
     img = img.convert("RGB")
-
     session = get_session(model_name)
-
     kwargs = {}
     if alpha_matting:
         kwargs.update(
@@ -69,35 +30,95 @@ def remove_bg(img, model_name, alpha_matting):
             alpha_matting_background_threshold=10,
             alpha_matting_erode_size=10,
         )
-
-    # Hasil: PIL mode RGBA (background transparan, RGB subjek UTUH)
     return remove(img, session=session, **kwargs)
 
-demo = gr.Interface(
-    fn=remove_bg,
-    inputs=[
-        gr.Image(type="pil", label="Upload Gambar"),
-        gr.Dropdown(
-            choices=[
-                "birefnet-portrait",   # TERBAIK untuk foto orang
-                "birefnet-general",    # TERBAIK untuk objek umum/produk
-                "isnet-general-use",   # Seimbang: cepat & bagus
-                "u2net_human_seg",     # Ringan untuk orang
-            ],
-            value="birefnet-portrait",
-            label="Model AI",
-        ),
-        gr.Checkbox(value=False, label="Alpha Matting (haluskan edge rambut)"),
-    ],
-    outputs=gr.Image(type="pil", label="Hasil (PNG Transparan)"),
-    title="Remove Background API",
-    description="Backend untuk Vercel. Endpoint: /api/remove_bg",
-    api_name="remove_bg",
-)
+# ── Handler untuk HuggingFace Web UI ──────────────────────────────────────────
+@spaces.GPU(duration=60)
+def remove_bg_ui(img, model_name, alpha_matting):
+    if img is None:
+        return None
+    if not isinstance(img, Image.Image):
+        img = Image.fromarray(np.uint8(img))
+    return process_image(img, model_name, alpha_matting)
 
-# Mount FastAPI custom ke Gradio agar /custom/upload tersedia
-app = gr.mount_gradio_app(app_fastapi, demo, path="/")
+# ── Handler untuk API Eksternal (Vercel / Next.js) ────────────────────────────
+@spaces.GPU(duration=60)
+def remove_bg_api(img_data, model_name, alpha_matting):
+    """
+    Endpoint API untuk Vercel / frontend.
+    Menerima base64 data URL atau objek {path: ...}.
+    Mengembalikan data:image/png;base64,... secara langsung tanpa perlu file upload terpisah.
+    """
+    if not img_data:
+        return None
+
+    try:
+        if isinstance(img_data, str):
+            # Jika berupa data URL atau base64 murni
+            if "," in img_data:
+                img_data = img_data.split(",", 1)[1]
+            img_bytes = base64.b64decode(img_data)
+            pil_img = Image.open(io.BytesIO(img_bytes))
+        elif isinstance(img_data, dict) and "path" in img_data:
+            pil_img = Image.open(img_data["path"])
+        else:
+            return None
+
+        result_img = process_image(pil_img, model_name, alpha_matting)
+
+        # Encode hasil ke base64 PNG
+        buffered = io.BytesIO()
+        result_img.save(buffered, format="PNG")
+        b64_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        return f"data:image/png;base64,{b64_str}"
+    except Exception as e:
+        print(f"[ERROR] API processing failed: {e}")
+        raise e
+
+# ── Gradio Blocks Interface ───────────────────────────────────────────────────
+with gr.Blocks(title="Background Remover AI") as demo:
+    gr.Markdown("# 🚀 AI Background Remover")
+    gr.Markdown("Hapus background gambar dengan presisi tinggi menggunakan ZeroGPU.")
+
+    # Tampilan UI untuk pengunjung HuggingFace Space
+    with gr.Row():
+        with gr.Column():
+            ui_input = gr.Image(type="pil", label="Upload Gambar")
+            ui_model = gr.Dropdown(
+                choices=[
+                    "birefnet-portrait",
+                    "birefnet-general",
+                    "isnet-general-use",
+                    "u2net_human_seg",
+                ],
+                value="birefnet-portrait",
+                label="Model AI",
+            )
+            ui_alpha = gr.Checkbox(value=False, label="Alpha Matting (haluskan edge rambut)")
+            ui_btn = gr.Button("Hapus Background", variant="primary")
+        with gr.Column():
+            ui_output = gr.Image(type="pil", label="Hasil (PNG Transparan)")
+
+    ui_btn.click(
+        fn=remove_bg_ui,
+        inputs=[ui_input, ui_model, ui_alpha],
+        outputs=ui_output,
+    )
+
+    # Komponen API untuk Vercel / endpoint /gradio_api/call/remove_bg
+    with gr.Row(visible=False):
+        api_input = gr.Textbox(label="Image Base64")
+        api_model = gr.Textbox(value="birefnet-portrait", label="Model")
+        api_alpha = gr.Checkbox(value=False, label="Alpha Matting")
+        api_output = gr.Textbox(label="Result Base64")
+        api_btn = gr.Button("API Trigger")
+
+    api_btn.click(
+        fn=remove_bg_api,
+        inputs=[api_input, api_model, api_alpha],
+        outputs=api_output,
+        api_name="remove_bg",
+    )
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=7860)
+    demo.launch()

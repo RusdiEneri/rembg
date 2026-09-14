@@ -1,18 +1,12 @@
 /**
  * API Route: /api/remove-bg
  *
- * Flow yang benar sesuai dokumentasi Gradio resmi:
- *   1. Upload gambar ke /custom/upload (FastAPI endpoint di HF Space)
- *      → dapat URL publik file di HF server
- *   2. POST ke /call/remove_bg dengan { "data": [{"path": url}, model, alpha] }
- *      → dapat event_id
- *   3. GET SSE /call/remove_bg/{event_id}
- *      → parse event:complete → dapat URL gambar hasil
- *   4. Fetch gambar hasil → kembalikan base64 ke browser
+ * Mengirim gambar langsung sebagai base64 ke HuggingFace Gradio Space (ZeroGPU).
+ * Tidak memerlukan endpoint /upload terpisah, menghindari masalah 404/405 di Hugging Face SSR proxy.
  */
 
-const HF_SPACE_URL = process.env.NEXT_PUBLIC_HF_SPACE_URL || 'https://ilhamdev-rembg.hf.space'
-const TIMEOUT_MS = 90_000
+const HF_SPACE_URL = (process.env.NEXT_PUBLIC_HF_SPACE_URL || 'https://ilhamdev-rembg.hf.space').replace(/\/+$/, '')
+const TIMEOUT_MS = 90_000 // 90 detik untuk toleransi ZeroGPU cold start
 
 export async function POST(request) {
   try {
@@ -22,52 +16,60 @@ export async function POST(request) {
     const alphaMatting = formData.get('alpha_matting') === 'true'
 
     if (!imageFile) {
-      return Response.json({ error: 'No image provided' }, { status: 400 })
+      return Response.json({ error: 'Tidak ada file gambar yang dikirim' }, { status: 400 })
     }
 
-    // ── STEP 1: Upload gambar ke endpoint FastAPI custom di HF Space ──────
-    const uploadForm = new FormData()
-    const blob = new Blob([await imageFile.arrayBuffer()], { type: imageFile.type || 'image/png' })
-    uploadForm.append('file', blob, imageFile.name || 'image.png')
+    // ── STEP 1: Konversi file gambar ke Base64 Data URL ────────────────────
+    const arrayBuffer = await imageFile.arrayBuffer()
+    const base64 = Buffer.from(arrayBuffer).toString('base64')
+    const mimeType = imageFile.type || 'image/png'
+    const dataUrl = `data:${mimeType};base64,${base64}`
 
-    const uploadRes = await fetch(`${HF_SPACE_URL}/custom/upload`, {
-      method: 'POST',
-      body: uploadForm,
-    })
+    const payload = {
+      data: [dataUrl, modelName, alphaMatting],
+    }
 
-    if (!uploadRes.ok) {
-      const errText = await uploadRes.text()
-      console.error('[Upload Error]', uploadRes.status, errText.slice(0, 200))
+    // ── STEP 2: POST ke Gradio API Endpoint ────────────────────────────────
+    // Coba path standar Hugging Face (/gradio_api/call/remove_bg), lalu fallback ke (/call/remove_bg)
+    const candidateEndpoints = [
+      `${HF_SPACE_URL}/gradio_api/call/remove_bg`,
+      `${HF_SPACE_URL}/call/remove_bg`,
+    ]
+
+    let callRes = null
+    let usedEndpoint = ''
+    let lastErrorText = ''
+
+    for (const endpoint of candidateEndpoints) {
+      try {
+        console.log('[Connecting] Mengirim request ke:', endpoint)
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        })
+
+        if (res.ok) {
+          callRes = res
+          usedEndpoint = endpoint
+          break
+        } else {
+          lastErrorText = await res.text()
+          console.warn(`[Endpoint ${res.status}] ${endpoint}:`, lastErrorText.slice(0, 120))
+        }
+      } catch (err) {
+        console.warn(`[Fetch Fail] ${endpoint}:`, err.message)
+      }
+    }
+
+    if (!callRes) {
       return Response.json(
-        { error: `Gagal upload gambar: ${uploadRes.status} — ${errText.slice(0, 100)}` },
-        { status: 502 }
-      )
-    }
-
-    const { url: imageUrl } = await uploadRes.json()
-    console.log('[Upload OK] imageUrl:', imageUrl)
-
-    // ── STEP 2: POST ke /call/remove_bg dengan URL file ────────────────────
-    // Format sesuai docs Gradio: file input = { "path": "https://..." }
-    const callPayload = {
-      data: [
-        { path: imageUrl },   // URL publik, bukan base64
-        modelName,
-        alphaMatting,
-      ],
-    }
-
-    const callRes = await fetch(`${HF_SPACE_URL}/call/remove_bg`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(callPayload),
-    })
-
-    if (!callRes.ok) {
-      const errText = await callRes.text()
-      console.error('[Call Error]', callRes.status, errText.slice(0, 300))
-      return Response.json(
-        { error: `Gagal panggil HuggingFace API: ${callRes.status} — ${errText.slice(0, 150)}` },
+        {
+          error: `Gagal memanggil backend HuggingFace. Status server mungkin sedang starting/rebuilding: ${lastErrorText.slice(0, 100) || 'Connection failed'}`,
+        },
         { status: 502 }
       )
     }
@@ -78,13 +80,15 @@ export async function POST(request) {
     }
     console.log('[Call OK] event_id:', event_id)
 
-    // ── STEP 3: Baca SSE stream hasil ─────────────────────────────────────
+    // ── STEP 3: Baca SSE Stream untuk mengambil hasil ──────────────────────
+    const sseUrl = `${usedEndpoint}/${event_id}`
     const sseController = new AbortController()
     const sseTimer = setTimeout(() => sseController.abort(), TIMEOUT_MS)
 
     let sseRes
     try {
-      sseRes = await fetch(`${HF_SPACE_URL}/call/remove_bg/${event_id}`, {
+      sseRes = await fetch(sseUrl, {
+        headers: { Accept: 'text/event-stream' },
         signal: sseController.signal,
       })
     } finally {
@@ -93,16 +97,15 @@ export async function POST(request) {
 
     if (!sseRes.ok) {
       return Response.json(
-        { error: `Gagal baca SSE hasil: ${sseRes.status}` },
+        { error: `Gagal membaca SSE status dari HuggingFace: ${sseRes.status}` },
         { status: 502 }
       )
     }
 
     const sseText = await sseRes.text()
-    console.log('[SSE Raw first 500]', sseText.slice(0, 500))
+    console.log('[SSE Status received, length:]', sseText.length)
 
-    // Parse SSE — cari event "complete"
-    let resultData = null
+    let resultOutput = null
     let errorMsg = null
     const lines = sseText.split('\n')
     let currentEvent = ''
@@ -121,77 +124,65 @@ export async function POST(request) {
           try {
             const parsed = JSON.parse(raw)
             if (Array.isArray(parsed) && parsed.length > 0) {
-              resultData = parsed[0]
+              resultOutput = parsed[0]
             }
           } catch {
-            console.error('[SSE parse fail]', raw.slice(0, 100))
+            console.error('[SSE parse error]', raw.slice(0, 100))
           }
         }
       }
     }
 
     if (errorMsg) {
-      return Response.json({ error: `Gradio error: ${errorMsg}` }, { status: 502 })
+      return Response.json({ error: `Gradio inference error: ${errorMsg}` }, { status: 502 })
     }
 
-    if (!resultData) {
+    if (!resultOutput) {
       return Response.json(
-        { error: 'Tidak ada data hasil. Coba lagi — ZeroGPU mungkin cold start.' },
+        { error: 'ZeroGPU belum selesai atau sedang antre. Silakan coba kembali sesaat lagi.' },
         { status: 502 }
       )
     }
 
-    // ── STEP 4: Fetch gambar hasil → kembalikan base64 ────────────────────
-    // resultData sesuai docs: { path, url, orig_name, meta }
-    // url format: "https://ilhamdev-rembg.hf.space/c/file=/tmp/gradio/xxx/image.png"
-    let imgUrl = resultData.url || resultData.path
-    console.log('[Result data]', JSON.stringify(resultData).slice(0, 200))
-
-    if (!imgUrl) {
-      return Response.json({ error: 'Tidak ada URL gambar hasil dari Gradio' }, { status: 502 })
-    }
-
-    // Jika path relatif, buat URL lengkap
-    if (!imgUrl.startsWith('http') && !imgUrl.startsWith('data:')) {
-      // Format Gradio untuk serve file: /file=/tmp/gradio/xxx/image.png
-      imgUrl = `${HF_SPACE_URL}/file=${imgUrl}`
-    }
-
-    const imgRes = await fetch(imgUrl)
-    if (!imgRes.ok) {
-      // Coba format alternatif dengan /c/ prefix (Gradio CDN)
-      const altUrl = `${HF_SPACE_URL}/c/file=${resultData.path || ''}`
-      console.log('[Retry alt URL]', altUrl)
-      const altRes = await fetch(altUrl)
-      if (!altRes.ok) {
-        return Response.json(
-          { error: `Gagal fetch gambar hasil: ${imgRes.status}` },
-          { status: 502 }
-        )
+    // ── STEP 4: Format Kembalian Gambar ───────────────────────────────────
+    // Jika resultOutput adalah base64 data URL langsung (sesuai fungsi remove_bg_api kita)
+    if (typeof resultOutput === 'string') {
+      if (resultOutput.startsWith('data:')) {
+        return Response.json({ success: true, image: resultOutput })
       }
-      const buf = await altRes.arrayBuffer()
       return Response.json({
         success: true,
-        image: `data:image/png;base64,${Buffer.from(buf).toString('base64')}`,
+        image: `data:image/png;base64,${resultOutput}`,
       })
     }
 
-    const imgBuf = await imgRes.arrayBuffer()
-    const mime = imgRes.headers.get('content-type') || 'image/png'
+    // Fallback jika berupa objek file Gradio { path, url }
+    let imgUrl = resultOutput.url || resultOutput.path
+    if (imgUrl) {
+      if (!imgUrl.startsWith('http') && !imgUrl.startsWith('data:')) {
+        imgUrl = `${HF_SPACE_URL}/gradio_api/file=${imgUrl}`
+      }
+      const fileRes = await fetch(imgUrl)
+      if (fileRes.ok) {
+        const buf = await fileRes.arrayBuffer()
+        const mime = fileRes.headers.get('content-type') || 'image/png'
+        return Response.json({
+          success: true,
+          image: `data:${mime};base64,${Buffer.from(buf).toString('base64')}`,
+        })
+      }
+    }
 
-    return Response.json({
-      success: true,
-      image: `data:${mime};base64,${Buffer.from(imgBuf).toString('base64')}`,
-    })
+    return Response.json({ error: 'Format output dari HuggingFace tidak dikenali' }, { status: 502 })
 
   } catch (err) {
     if (err.name === 'AbortError') {
       return Response.json(
-        { error: 'Timeout 90 detik. ZeroGPU sedang cold start, coba lagi dalam 30 detik.' },
+        { error: 'Timeout 90 detik. Model ZeroGPU sedang cold start, silakan coba lagi.' },
         { status: 504 }
       )
     }
-    console.error('[API Error]', err)
+    console.error('[API Handler Error]', err)
     return Response.json({ error: err.message }, { status: 500 })
   }
 }
