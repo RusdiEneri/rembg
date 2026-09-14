@@ -90,27 +90,11 @@ export default function Home() {
         throw new Error(data.error || 'Terjadi kesalahan pada server')
       }
 
-      // result bisa berupa { url } atau { path } atau string
-      let imgUrl
-      if (typeof data.result === 'string') {
-        imgUrl = data.result
-      } else if (data.result?.url) {
-        imgUrl = data.result.url
-      } else if (data.result?.path) {
-        // HF returns relative path, construct full URL
-        const hfBase = process.env.NEXT_PUBLIC_HF_SPACE_URL || 'https://ilhamdev-rembg.hf.space'
-        imgUrl = `${hfBase}/file=${data.result.path}`
-      }
-
-      if (!imgUrl) throw new Error('Tidak ada URL gambar hasil')
-
-      // Fetch gambar sebagai blob untuk download lokal
-      const imgRes = await fetch(imgUrl)
-      const blob = await imgRes.blob()
-      const localUrl = URL.createObjectURL(blob)
+      // API route sekarang mengembalikan base64 langsung di data.image
+      if (!data.image) throw new Error('Tidak ada gambar hasil dari server')
 
       setProgress(100)
-      setResultUrl(localUrl)
+      setResultUrl(data.image)  // base64 data URL, langsung bisa dipakai sebagai src
     } catch (err) {
       clearInterval(progressInterval)
       setError(err.message)
