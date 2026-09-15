@@ -1,0 +1,46 @@
+name: Ping Hugging Face Space (Keep Alive)
+
+on:
+  schedule:
+    # Berjalan setiap 6 jam (menit ke-0 pada jam 00:00, 06:00, 12:00, 18:00 UTC)
+    # Hugging Face Space timeout biasanya 48 jam, interval 6 jam sangat aman & hemat kuota
+    - cron: '0 */6 * * *'
+  workflow_dispatch: # Memungkinkan trigger manual langsung dari tab GitHub Actions
+
+jobs:
+  ping-space:
+    name: Ping Hugging Face Space
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Space Web & Check Status
+        env:
+          SPACE_URL: ${{ secrets.HF_SPACE_URL || 'https://ilhamdev-rembg.hf.space' }}
+          SPACE_API: 'https://huggingface.co/api/spaces/ilhamdev/rembg'
+        run: |
+          echo "=========================================="
+          echo "Target Space URL: $SPACE_URL"
+          echo "Target Space API: $SPACE_API"
+          echo "=========================================="
+
+          echo "1. Mengirim HTTP Ping ke Space URL..."
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -L --retry 3 --retry-delay 5 --max-time 60 "$SPACE_URL")
+          echo "HTTP Status: $HTTP_STATUS"
+
+          if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 400 ]; then
+            echo "✅ Ping berhasil! Space aktif merespons (HTTP $HTTP_STATUS)."
+          else
+            echo "⚠️ Peringatan: Menerima respons HTTP $HTTP_STATUS saat mem-ping Space."
+          fi
+
+          echo ""
+          echo "2. Memeriksa runtime status dari Hugging Face API..."
+          STAGE=$(curl -s --max-time 30 "$SPACE_API" | jq -r '.runtime.stage // "UNKNOWN"')
+          echo "Space Runtime Stage: $STAGE"
+
+          if [ "$STAGE" = "RUNNING" ]; then
+            echo "🚀 Space berstatus RUNNING dan siap melayani request."
+          elif [ "$STAGE" = "SLEEPING" ] || [ "$STAGE" = "PAUSED" ]; then
+            echo "🔄 Space sedang $STAGE. Request ping akan memicu proses wake-up."
+          else
+            echo "ℹ️ Status saat ini: $STAGE"
+          fi
