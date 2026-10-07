@@ -5,9 +5,11 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "test": "node --test src/lib/turnstile.test.js"
   },
   "dependencies": {
+    "@marsidev/react-turnstile": "^1.6.1",
     "next": "14.2.5",
     "react": "^18",
     "react-dom": "^18"

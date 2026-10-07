@@ -5,6 +5,8 @@
  * Tidak memerlukan endpoint /upload terpisah, menghindari masalah 404/405 di Hugging Face SSR proxy.
  */
 
+import { verifyTurnstileToken } from '@/lib/turnstile'
+
 const HF_SPACE_URL = (process.env.NEXT_PUBLIC_HF_SPACE_URL || 'https://ilhamdev-rembg.hf.space').replace(/\/+$/, '')
 const TIMEOUT_MS = 90_000 // 90 detik untuk toleransi ZeroGPU cold start
 
@@ -14,6 +16,21 @@ export async function POST(request) {
     const imageFile = formData.get('image')
     const modelName = formData.get('model_name') || 'birefnet-portrait'
     const alphaMatting = formData.get('alpha_matting') === 'true'
+    const turnstileToken = formData.get('turnstile_token')
+
+    // ── STEP 0: Verifikasi Keamanan Cloudflare Turnstile ──────────────────
+    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || request.headers.get('cf-connecting-ip') || undefined
+    const turnstileVerification = await verifyTurnstileToken({
+      token: turnstileToken,
+      remoteIp: clientIp,
+    })
+
+    if (!turnstileVerification.success) {
+      return Response.json(
+        { error: turnstileVerification.error || 'Verifikasi keamanan Turnstile gagal. Silakan muat ulang atau coba lagi.' },
+        { status: 403 }
+      )
+    }
 
     if (!imageFile) {
       return Response.json({ error: 'Tidak ada file gambar yang dikirim' }, { status: 400 })

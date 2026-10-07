@@ -1,7 +1,11 @@
 'use client'
 
 import { useState, useRef, useCallback } from 'react'
+import { Turnstile } from '@marsidev/react-turnstile'
+import { DEFAULT_TEST_SITE_KEY } from '@/lib/turnstile'
 import './globals.css'
+
+const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || DEFAULT_TEST_SITE_KEY
 
 const MODELS = [
   { value: 'birefnet-portrait', label: '👤 BiRefNet Portrait — Terbaik untuk orang' },
@@ -20,8 +24,10 @@ export default function Home() {
   const [error, setError] = useState(null)
   const [progress, setProgress] = useState(0)
   const [dragover, setDragover] = useState(false)
+  const [turnstileToken, setTurnstileToken] = useState(null)
 
   const fileInputRef = useRef(null)
+  const turnstileRef = useRef(null)
 
   const handleFile = useCallback((file) => {
     if (!file || !file.type.startsWith('image/')) {
@@ -60,6 +66,11 @@ export default function Home() {
   const handleRemoveBg = async () => {
     if (!imageFile) return
 
+    if (!turnstileToken) {
+      setError('Mohon selesaikan verifikasi keamanan Turnstile terlebih dahulu.')
+      return
+    }
+
     setLoading(true)
     setError(null)
     setResultUrl(null)
@@ -75,6 +86,7 @@ export default function Home() {
       formData.append('image', imageFile)
       formData.append('model_name', model)
       formData.append('alpha_matting', alphaMatting.toString())
+      formData.append('turnstile_token', turnstileToken)
 
       const res = await fetch('/api/remove-bg', {
         method: 'POST',
@@ -101,6 +113,8 @@ export default function Home() {
     } finally {
       setLoading(false)
       setTimeout(() => setProgress(0), 1000)
+      turnstileRef.current?.reset()
+      setTurnstileToken(null)
     }
   }
 
@@ -110,6 +124,8 @@ export default function Home() {
     setImageFile(null)
     setError(null)
     setProgress(0)
+    turnstileRef.current?.reset()
+    setTurnstileToken(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -241,13 +257,37 @@ export default function Home() {
               </div>
             )}
 
+            {/* Cloudflare Turnstile */}
+            <div className="turnstile-wrapper">
+              <Turnstile
+                ref={turnstileRef}
+                siteKey={TURNSTILE_SITE_KEY}
+                onSuccess={(token) => {
+                  setTurnstileToken(token)
+                  setError(null)
+                }}
+                onExpire={() => setTurnstileToken(null)}
+                onError={() => {
+                  setTurnstileToken(null)
+                  setError('Verifikasi Cloudflare Turnstile gagal dimuat. Periksa koneksi internet Anda.')
+                }}
+                options={{
+                  theme: 'dark',
+                  size: 'normal',
+                }}
+              />
+              <div className="turnstile-hint">
+                🔒 Dilindungi oleh Cloudflare Turnstile anti-bot
+              </div>
+            </div>
+
             {/* Action Buttons */}
             <div style={{ marginTop: '20px', display: 'flex', gap: '12px' }}>
               <button
                 id="remove-bg-btn"
                 className="btn-remove"
                 onClick={handleRemoveBg}
-                disabled={!imageFile || loading}
+                disabled={!imageFile || loading || !turnstileToken}
               >
                 {loading ? (
                   <>

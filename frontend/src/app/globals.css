@@ -656,6 +656,25 @@ body {
   100% { background-position: 200px 0; }
 }
 
+/* ===== CLOUDFLARE TURNSTILE ===== */
+.turnstile-wrapper {
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 65px;
+}
+
+.turnstile-hint {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
 /* ===== RESPONSIVE ===== */
 @media (max-width: 640px) {
   .settings-row {
