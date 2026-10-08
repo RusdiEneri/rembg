@@ -89,6 +89,8 @@ with gr.Blocks(title="Background Remover AI") as demo:
                     "birefnet-portrait",
                     "birefnet-general",
                     "isnet-general-use",
+                    "isnet-anime",
+                    "u2net",
                     "u2net_human_seg",
                 ],
                 value="birefnet-portrait",
