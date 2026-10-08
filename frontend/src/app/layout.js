@@ -16,15 +16,15 @@ export const viewport = {
 
 export const metadata = {
   metadataBase: new URL(SITE_URL),
-  title: 'RemBG: Hapus Background Foto AI Otomatis & Presisi Tinggi',
-  description: 'Hapus background foto secara instan menggunakan AI ZeroGPU dan rembg. Mendukung foto orang, produk, dan objek umum secara gratis tanpa watermark.',
+  title: 'RemBG: Pemotong Latar Belakang Foto',
+  description: 'Pisahkan latar belakang foto menjadi format PNG transparan secara cepat menggunakan model BiRefNet dan ISNet.',
   keywords: [
     'hapus background foto',
     'remove background online',
-    'background transparan AI',
+    'background transparan',
     'rembg online',
     'BiRefNet',
-    'potong latar belakang gratis',
+    'potong latar belakang foto',
   ],
   authors: [{ name: 'RemBG' }],
   creator: 'RemBG',
@@ -33,8 +33,8 @@ export const metadata = {
     canonical: '/',
   },
   openGraph: {
-    title: 'RemBG: Hapus Background Foto AI Otomatis & Presisi Tinggi',
-    description: 'Hapus background foto instan dengan AI ZeroGPU dan rembg. Gratis, cepat, dan transparan tanpa kompresi.',
+    title: 'RemBG: Pemotong Latar Belakang Foto',
+    description: 'Pisahkan latar belakang foto menjadi format PNG transparan secara cepat menggunakan model BiRefNet dan ISNet.',
     url: SITE_URL,
     siteName: 'RemBG',
     locale: 'id_ID',
@@ -42,8 +42,8 @@ export const metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'RemBG: Hapus Background Foto AI Otomatis & Presisi Tinggi',
-    description: 'Hapus background foto instan dengan AI ZeroGPU dan rembg. Gratis, cepat, dan transparan tanpa kompresi.',
+    title: 'RemBG: Pemotong Latar Belakang Foto',
+    description: 'Pisahkan latar belakang foto menjadi format PNG transparan secara cepat menggunakan model BiRefNet dan ISNet.',
   },
   robots: {
     index: true,

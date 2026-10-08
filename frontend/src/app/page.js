@@ -7,11 +7,11 @@ import { DEFAULT_TEST_SITE_KEY } from '@/lib/turnstile'
 const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || DEFAULT_TEST_SITE_KEY
 
 const MODELS = [
-  { value: 'birefnet-portrait', label: 'BiRefNet Portrait (Optimal untuk manusia & rambut)' },
-  { value: 'birefnet-general', label: 'BiRefNet General (Optimal untuk produk & objek)' },
-  { value: 'isnet-general-use', label: 'ISNet General (Serbaguna, cepat & seimbang)' },
-  { value: 'isnet-anime', label: 'ISNet Anime (Optimal untuk kartun, anime & ilustrasi)' },
-  { value: 'u2net', label: 'U2Net (Model umum klasik yang stabil)' },
+  { value: 'birefnet-portrait', label: 'BiRefNet Portrait (Subjek manusia & rambut halus)' },
+  { value: 'birefnet-general', label: 'BiRefNet General (Produk & benda mati)' },
+  { value: 'isnet-general-use', label: 'ISNet General (Cepat & serbaguna)' },
+  { value: 'isnet-anime', label: 'ISNet Anime (Ilustrasi 2D & animasi)' },
+  { value: 'u2net', label: 'U2Net Standard (Model umum stabil)' },
   { value: 'u2net_human_seg', label: 'U2Net Human (Segmentasi manusia ringan)' },
 ]
 
@@ -27,6 +27,7 @@ export default function Home() {
   const [previewUrl, setPreviewUrl] = useState(null)
   const [resultUrl, setResultUrl] = useState(null)
   const [imageFile, setImageFile] = useState(null)
+  const [imageMeta, setImageMeta] = useState(null)
   const [model, setModel] = useState('birefnet-portrait')
   const [alphaMatting, setAlphaMatting] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -35,9 +36,26 @@ export default function Home() {
   const [dragover, setDragover] = useState(false)
   const [turnstileToken, setTurnstileToken] = useState(null)
   const [inspectorBg, setInspectorBg] = useState('checkerboard')
+  const [viewMode, setViewMode] = useState('result') // 'result' | 'original'
+  const [theme, setTheme] = useState('dark')
 
   const fileInputRef = useRef(null)
   const turnstileRef = useRef(null)
+
+  // Inisialisasi tema tampilan
+  useEffect(() => {
+    const saved = localStorage.getItem('rembg-theme')
+    const initial = saved || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+    setTheme(initial)
+    document.documentElement.setAttribute('data-theme', initial)
+  }, [])
+
+  const toggleTheme = () => {
+    const nextTheme = theme === 'dark' ? 'light' : 'dark'
+    setTheme(nextTheme)
+    document.documentElement.setAttribute('data-theme', nextTheme)
+    localStorage.setItem('rembg-theme', nextTheme)
+  }
 
   const handleFile = useCallback((file) => {
     if (!file || !file.type.startsWith('image/')) {
@@ -53,6 +71,13 @@ export default function Home() {
     setImageFile(file)
     const url = URL.createObjectURL(file)
     setPreviewUrl(url)
+    setViewMode('result')
+
+    const img = new Image()
+    img.onload = () => {
+      setImageMeta({ width: img.naturalWidth, height: img.naturalHeight })
+    }
+    img.src = url
   }, [])
 
   // Dukungan paste gambar dari clipboard
@@ -96,7 +121,7 @@ export default function Home() {
     if (!imageFile) return
 
     if (!turnstileToken) {
-      setError('Mohon selesaikan verifikasi keamanan Turnstile terlebih dahulu.')
+      setError('Selesaikan verifikasi keamanan Cloudflare Turnstile di bawah sebelum memproses gambar.')
       return
     }
 
@@ -136,6 +161,7 @@ export default function Home() {
 
       setProgress(100)
       setResultUrl(data.image)
+      setViewMode('result')
     } catch (err) {
       clearInterval(progressInterval)
       setError(err.message)
@@ -151,8 +177,10 @@ export default function Home() {
     setPreviewUrl(null)
     setResultUrl(null)
     setImageFile(null)
+    setImageMeta(null)
     setError(null)
     setProgress(0)
+    setViewMode('result')
     turnstileRef.current?.reset()
     setTurnstileToken(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
@@ -186,18 +214,41 @@ export default function Home() {
               <span className="logo-text">RemBG</span>
             </a>
             <div className="header-meta">
-              <span className="system-status">
-                <span className="status-dot" aria-hidden="true" />
-                ZeroGPU Online
-              </span>
+              <button
+                type="button"
+                className="theme-toggle-btn"
+                onClick={toggleTheme}
+                aria-label={`Ganti ke tema ${theme === 'dark' ? 'terang' : 'gelap'}`}
+                title={`Ganti ke tema ${theme === 'dark' ? 'terang' : 'gelap'}`}
+              >
+                {theme === 'dark' ? (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="5"/>
+                    <line x1="12" y1="1" x2="12" y2="3"/>
+                    <line x1="12" y1="21" x2="12" y2="23"/>
+                    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                    <line x1="1" y1="12" x2="3" y2="12"/>
+                    <line x1="21" y1="12" x2="23" y2="12"/>
+                    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+                  </svg>
+                ) : (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                  </svg>
+                )}
+                <span className="theme-toggle-label">{theme === 'dark' ? 'Terang' : 'Gelap'}</span>
+              </button>
+
               <a
                 href="https://huggingface.co/spaces/ilhamdev/rembg"
                 target="_blank"
                 rel="noreferrer"
                 className="hf-link"
               >
-                Hugging Face Space
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                HF Space
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
                   <polyline points="15 3 21 3 21 9"/>
                   <line x1="10" y1="14" x2="21" y2="3"/>
@@ -211,14 +262,14 @@ export default function Home() {
       {/* Hero */}
       <section className="hero">
         <div className="container">
-          <h1>Hapus Background Foto Otomatis</h1>
+          <h1>Pemisah Latar Belakang Foto</h1>
           <p className="hero-desc">
-            Pemisahan objek foto secara presisi dengan model BiRefNet dan ISNet. Diproses tanpa watermark dengan resolusi penuh.
+            Pemisahan subjek foto otomatis menggunakan model segmentasi BiRefNet dan ISNet. Hasil transparan resolusi penuh dalam format PNG.
           </p>
         </div>
       </section>
 
-      {/* Main Card */}
+      {/* Main Tool Card */}
       <main>
         <div className="container">
           <div className="main-card">
@@ -292,9 +343,9 @@ export default function Home() {
                       <polyline points="21 15 16 10 5 21"/>
                     </svg>
                   </div>
-                  <div className="dropzone-title">Pilih file atau tarik gambar ke sini</div>
+                  <div className="dropzone-title">Pilih file gambar atau tarik ke area ini</div>
                   <div className="dropzone-hint">
-                    Mendukung JPG, PNG, WEBP (maksimal 20MB) atau tempel (Ctrl+V)
+                    Format JPG, PNG, atau WEBP hingga 20MB. Bisa juga tempel langsung (Ctrl+V).
                   </div>
                 </div>
               </div>
@@ -309,9 +360,11 @@ export default function Home() {
                 </div>
                 <div className="preview-meta-row">
                   <div className="meta-info">
-                    <span>{imageFile?.name}</span>
-                    <span>•</span>
-                    <span>{formatFileSize(imageFile?.size)}</span>
+                    <span className="meta-filename">{imageFile?.name}</span>
+                    {imageMeta && (
+                      <span className="meta-badge">{imageMeta.width} × {imageMeta.height} px</span>
+                    )}
+                    <span className="meta-badge">{formatFileSize(imageFile?.size)}</span>
                   </div>
                   <button
                     type="button"
@@ -327,8 +380,14 @@ export default function Home() {
 
             {/* Indikator Progres */}
             {loading && (
-              <div className="progress-track" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}>
-                <div className="progress-bar-fill" style={{ width: `${progress}%` }} />
+              <div className="progress-wrapper">
+                <div className="progress-header">
+                  <span className="progress-label">Memproses pemisahan latar belakang...</span>
+                  <span className="progress-value">{Math.round(progress)}%</span>
+                </div>
+                <div className="progress-track" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}>
+                  <div className="progress-bar-fill" style={{ width: `${progress}%` }} />
+                </div>
               </div>
             )}
 
@@ -359,12 +418,12 @@ export default function Home() {
                   setError('Verifikasi Cloudflare Turnstile gagal dimuat. Periksa koneksi internet Anda.')
                 }}
                 options={{
-                  theme: 'dark',
+                  theme: theme === 'light' ? 'light' : 'dark',
                   size: 'normal',
                 }}
               />
               <span className="turnstile-notice">
-                Verifikasi keamanan bot Cloudflare
+                {turnstileToken ? 'Verifikasi keamanan selesai.' : 'Verifikasi keamanan Cloudflare Turnstile diperlukan sebelum proses.'}
               </span>
             </div>
 
@@ -384,9 +443,13 @@ export default function Home() {
                 ) : (
                   <>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <polyline points="20 6 9 17 4 12"/>
+                      <circle cx="6" cy="6" r="3"/>
+                      <circle cx="6" cy="18" r="3"/>
+                      <line x1="20" y1="4" x2="8.12" y2="15.88"/>
+                      <line x1="14.47" y1="14.48" x2="20" y2="20"/>
+                      <line x1="8.12" y1="8.12" x2="12" y2="12"/>
                     </svg>
-                    Hapus Background
+                    Hapus Latar Belakang
                   </>
                 )}
               </button>
@@ -407,36 +470,69 @@ export default function Home() {
           {resultUrl && (
             <div className="result-section" id="result-section">
               <div className="result-header">
-                <span className="result-title">Hasil Pemotongan Background</span>
-                <div className="bg-inspector-group" role="group" aria-label="Pilihan latar inspeksi">
-                  <button
-                    type="button"
-                    className={`bg-inspector-btn ${inspectorBg === 'checkerboard' ? 'active' : ''}`}
-                    onClick={() => setInspectorBg('checkerboard')}
-                  >
-                    Transparan
-                  </button>
-                  <button
-                    type="button"
-                    className={`bg-inspector-btn ${inspectorBg === 'white' ? 'active' : ''}`}
-                    onClick={() => setInspectorBg('white')}
-                  >
-                    Latar Putih
-                  </button>
-                  <button
-                    type="button"
-                    className={`bg-inspector-btn ${inspectorBg === 'dark' ? 'active' : ''}`}
-                    onClick={() => setInspectorBg('dark')}
-                  >
-                    Latar Gelap
-                  </button>
+                <div className="result-title-group">
+                  <span className="result-title">Hasil Pemotongan</span>
+                  {imageMeta && (
+                    <span className="result-meta-badge">{imageMeta.width} × {imageMeta.height} px • PNG RGBA</span>
+                  )}
+                </div>
+
+                <div className="result-controls-bar">
+                  {/* Mode Tampilan: Hasil vs Asli */}
+                  <div className="view-mode-group" role="group" aria-label="Mode perbandingan">
+                    <button
+                      type="button"
+                      className={`control-tab-btn ${viewMode === 'result' ? 'active' : ''}`}
+                      onClick={() => setViewMode('result')}
+                    >
+                      Hasil
+                    </button>
+                    <button
+                      type="button"
+                      className={`control-tab-btn ${viewMode === 'original' ? 'active' : ''}`}
+                      onClick={() => setViewMode('original')}
+                    >
+                      Foto Asli
+                    </button>
+                  </div>
+
+                  {/* Latar Belakang Inspeksi */}
+                  {viewMode === 'result' && (
+                    <div className="bg-inspector-group" role="group" aria-label="Pilihan latar inspeksi">
+                      <button
+                        type="button"
+                        className={`bg-inspector-btn ${inspectorBg === 'checkerboard' ? 'active' : ''}`}
+                        onClick={() => setInspectorBg('checkerboard')}
+                        title="Latar transparan (papan catur)"
+                      >
+                        Transparan
+                      </button>
+                      <button
+                        type="button"
+                        className={`bg-inspector-btn ${inspectorBg === 'white' ? 'active' : ''}`}
+                        onClick={() => setInspectorBg('white')}
+                        title="Latar putih solid"
+                      >
+                        Putih
+                      </button>
+                      <button
+                        type="button"
+                        className={`bg-inspector-btn ${inspectorBg === 'dark' ? 'active' : ''}`}
+                        onClick={() => setInspectorBg('dark')}
+                        title="Latar gelap solid"
+                      >
+                        Gelap
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <div className={`result-canvas ${inspectorBg}`}>
+              {/* Kanvas Pratinjau Hasil */}
+              <div className={`result-canvas ${viewMode === 'result' ? inspectorBg : 'original-bg'}`}>
                 <img
-                  src={resultUrl}
-                  alt="Hasil foto dengan background transparan"
+                  src={viewMode === 'result' ? resultUrl : previewUrl}
+                  alt={viewMode === 'result' ? 'Hasil foto dengan background transparan' : 'Foto asli sebelum dipotong'}
                   className="result-image"
                   id="result-image"
                 />
@@ -460,16 +556,16 @@ export default function Home() {
                   className="btn-secondary"
                   onClick={handleReset}
                 >
-                  Coba Foto Lain
+                  Foto Baru
                 </button>
               </div>
 
               {/* Panel Proses Ulang dengan Model Alternatif */}
               <div className="reprocess-panel">
                 <div className="reprocess-header">
-                  <span className="reprocess-title">Hasil Kurang Pas? Coba Model Alternatif</span>
+                  <span className="reprocess-title">Coba Model Alternatif</span>
                   <span className="reprocess-desc">
-                    Ubah model atau aktifkan Alpha Matting lalu klik proses ulang langsung pada foto ini tanpa upload ulang.
+                    Ubah konfigurasi model atau detail tepi di bawah untuk memproses ulang foto yang sama.
                   </span>
                 </div>
                 <div className="reprocess-controls">
@@ -503,6 +599,7 @@ export default function Home() {
                     className="btn-secondary"
                     onClick={handleRemoveBg}
                     disabled={loading || !turnstileToken}
+                    title={!turnstileToken ? 'Verifikasi Turnstile diperlukan untuk proses ulang' : 'Proses ulang gambar'}
                   >
                     {loading ? (
                       <>
@@ -520,32 +617,36 @@ export default function Home() {
                     )}
                   </button>
                 </div>
+                {!turnstileToken && (
+                  <p className="reprocess-tip">
+                    Catatan: Setiap pemrosesan ulang memerlukan centang verifikasi Turnstile di kartu atas.
+                  </p>
+                )}
               </div>
             </div>
           )}
 
-          {/* Informasi Teknis & Spesifikasi Proyek */}
+          {/* Informasi Teknis & Spesifikasi Model */}
           <section className="info-section">
             <div className="info-grid">
               <article className="info-card">
-                <h2>Panduan Model AI</h2>
-                <p>Pilih model yang tepat untuk hasil segmentasi paling optimal:</p>
+                <h2>Karakteristik Model</h2>
                 <ul className="model-list">
-                  <li><strong>BiRefNet Portrait:</strong> Dirancang khusus untuk foto orang, mendeteksi lekuk pakaian dan helai rambut secara halus.</li>
-                  <li><strong>BiRefNet General:</strong> Optimal untuk foto produk, kemasan e-commerce, dan benda padat.</li>
-                  <li><strong>ISNet General:</strong> Model seimbang dengan kecepatan inferensi tinggi dan kualitas tajam.</li>
-                  <li><strong>ISNet Anime:</strong> Spesialis gambar kartun, ilustrasi 2D, anime, dan grafik vektor.</li>
-                  <li><strong>U2Net:</strong> Model umum klasik dengan toleransi tinggi terhadap berbagai tipe objek.</li>
-                  <li><strong>U2Net Human:</strong> Segmentasi manusia ringan untuk pemrosesan cepat.</li>
+                  <li><strong>BiRefNet Portrait:</strong> Optimal untuk potret manusia, mendeteksi lekuk pakaian dan helai rambut secara halus.</li>
+                  <li><strong>BiRefNet General:</strong> Optimal untuk foto produk, kemasan dagang, dan objek benda padat.</li>
+                  <li><strong>ISNet General:</strong> Inferensi cepat dengan batas tepi yang tajam untuk berbagai subjek umum.</li>
+                  <li><strong>ISNet Anime:</strong> Dikhususkan untuk ilustrasi 2D, karakter kartun, anime, dan grafik vektor.</li>
+                  <li><strong>U2Net Standard:</strong> Model segmentasi klasik dengan stabilitas tinggi pada berbagai tipe objek.</li>
+                  <li><strong>U2Net Human:</strong> Segmentasi figur manusia ringan untuk kebutuhan pemrosesan cepat.</li>
                 </ul>
               </article>
 
               <article className="info-card">
-                <h2>Spesifikasi & Privasi</h2>
+                <h2>Format & Pemrosesan</h2>
                 <ul className="model-list">
-                  <li><strong>Format Masukan:</strong> Mendukung JPG, JPEG, PNG, dan WEBP hingga ukuran 20MB.</li>
-                  <li><strong>Format Keluaran:</strong> Format PNG 32-bit dengan saluran alpha transparan penuh tanpa kompresi rusak.</li>
-                  <li><strong>Pemrosesan Aman:</strong> Gambar diproses langsung pada memori inferensi Hugging Face ZeroGPU dan tidak disimpan secara permanen pada server.</li>
+                  <li><strong>Format Masukan:</strong> Mendukung file JPG, JPEG, PNG, dan WEBP dengan ukuran hingga 20MB.</li>
+                  <li><strong>Format Keluaran:</strong> Format PNG dengan kanal alpha transparan penuh tanpa penurunan resolusi dimensi gambar.</li>
+                  <li><strong>Privasi Data:</strong> Berkas gambar diproses sementara di memori inferensi Hugging Face ZeroGPU dan tidak disimpan di server.</li>
                 </ul>
               </article>
             </div>
@@ -558,7 +659,7 @@ export default function Home() {
         <div className="container">
           <div className="footer-content">
             <span className="footer-text">
-              RemBG: Penghapus Background Foto AI
+              RemBG • Pemotong Latar Belakang Foto
             </span>
             <div className="footer-links">
               <a
