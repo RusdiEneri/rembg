@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import ThemeToggle from './theme-toggle'
 
 export const metadata = {
   title: '404: Halaman Tidak Ditemukan - RemBG',
@@ -7,25 +8,36 @@ export const metadata = {
 
 export default function NotFound() {
   return (
-    <div className="layout-root">
+    <div className="app-wrapper">
       <header className="header">
         <div className="container">
-          <div className="header-content">
-            <Link href="/" className="logo-group" style={{ textDecoration: 'none' }}>
-              <div className="logo-box">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <div className="header-inner">
+            <Link href="/" className="logo" aria-label="RemBG Beranda">
+              <span className="logo-badge" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="6" cy="6" r="3" />
                   <circle cx="6" cy="18" r="3" />
                   <line x1="20" y1="4" x2="8.12" y2="15.88" />
                   <line x1="14.47" y1="14.48" x2="20" y2="20" />
                   <line x1="8.12" y1="8.12" x2="12" y2="12" />
                 </svg>
-              </div>
-              <div className="logo-text">
-                <span className="logo-title">RemBG</span>
-                <span className="logo-badge">404</span>
+              </span>
+              <div className="logo-title-group">
+                <span className="logo-text">RemBG</span>
+                <span className="logo-sub">AI CUTOUT</span>
               </div>
             </Link>
+
+            <div className="header-meta">
+              <ThemeToggle />
+              <Link href="/" className="hf-link" aria-label="Kembali ke Beranda">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <line x1="19" y1="12" x2="5" y2="12" />
+                  <polyline points="12 19 5 12 12 5" />
+                </svg>
+                <span>Beranda</span>
+              </Link>
+            </div>
           </div>
         </div>
       </header>
@@ -115,6 +127,19 @@ export default function NotFound() {
             <span className="footer-text">
               RemBG • Pemotong Latar Belakang Foto
             </span>
+            <div className="footer-links">
+              <Link href="/" className="footer-link">
+                Beranda
+              </Link>
+              <a
+                href="https://huggingface.co/spaces/ilhamdev/rembg"
+                target="_blank"
+                rel="noreferrer"
+                className="footer-link"
+              >
+                Hugging Face Space
+              </a>
+            </div>
           </div>
         </div>
       </footer>
