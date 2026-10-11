@@ -42,10 +42,14 @@ Area unggah drag-and-drop, seleksi model segmentasi, opsi alpha matting, dan ins
   - `U2Net Human`: Segmentasi figur manusia ringan untuk kebutuhan cepat.
 - **Alpha Matting Tepi Halus:** Opsi erosi piksel tepi dan ambang batas foreground/background untuk helai rambut tipis.
 - **Slider Perbandingan Interaktif:** Tuas perbandingan Before/After responsif dengan kendali mouse, sentuhan layar (touch-friendly), dan aksesibilitas keyboard (`input[type="range"]`).
+- **Ketahanan Kuota & Arsitektur Dual-Engine:**
+  - **ZeroGPU + CPU Fallback:** Inferensi primer dipercepat oleh ZeroGPU (`remove_bg`). Jika kuota GPU limit atau antre, sistem otomatis melakukan failover ke worker CPU (`remove_bg_cpu`) tanpa interupsi.
+  - **Multi-Token Rotation (`HF_TOKENS`):** Mendukung load-balancing kuota antar beberapa token akun Hugging Face secara acak.
+  - **Rotasi & Forwarding IP Publik:** Melindungi server dari limit IP anonim terpusat dengan meneruskan IP pengunjung asli serta menyediakan generator IP publik acak untuk lingkungan internal.
 - **Keamanan & Anti-Spam:**
   - Dilindungi Cloudflare Turnstile tanpa captcha yang mengganggu kenyamanan pengguna.
   - Dilengkapi *in-memory sliding window IP rate limiter* (15 req/menit) untuk mencegah bot flood.
-- **Privasi Data Penuh:** Berkas gambar hanya diproses sementara di memori GPU terisolasi (ZeroGPU) dan langsung dibuang setelah kanal alpha diekstrak. Tidak ada penyimpanan permanen di server.
+- **Privasi Data Penuh:** Berkas gambar hanya diproses sementara di memori GPU/CPU terisolasi dan langsung dibuang setelah kanal alpha diekstrak. Tidak ada penyimpanan permanen di server.
 - **Halaman Error 404 Kustom:** Tampilan 404 berdesain Neubrutalism yang aman tanpa kebocoran informasi internal server.
 - **Telemetri Tanpa Pelacak Pribadi:** Modul telemetri aman yang siap dihubungkan dengan Google Analytics (`gtag`) atau Plausible tanpa merekam berkas gambar atau identitas pengguna.
 
@@ -54,14 +58,24 @@ Area unggah drag-and-drop, seleksi model segmentasi, opsi alpha matting, dan ins
 ## Arsitektur Sistem
 
 ```mermaid
-flowchart LR
+flowchart TD
     A[Pengguna / Browser] -->|Unggah Gambar + Turnstile| B[Frontend Next.js 14]
     B -->|Validasi Ukuran & Rate Limit| C[API Route /api/remove-bg]
-    C -->|Base64 Payload via SSE| D[Hugging Face Space ZeroGPU]
-    D -->|Inferensi Model BiRefNet / ISNet| E[Pustaka Python rembg]
-    E -->|Kanal Alpha Transparan RGBA| D
-    D -->|Stream Event complete| C
-    C -->|Data URL PNG 32-bit| B
+    C -->|Rotasi Token & IP Forwarding| D[Client hf-inference.js]
+    
+    subgraph Hugging Face Space [ilhamdev-rembg.hf.space]
+        E[Endpoint ZeroGPU /remove_bg]
+        F[Endpoint CPU Fallback /remove_bg_cpu]
+        G[Pustaka Python rembg BiRefNet / ISNet]
+    end
+
+    D -->|Coba Primer: Akselerasi GPU| E
+    E -->|Injeksi Tensor GPU| G
+    E -.->|Jika ZeroGPU Quota Limit| F
+    F -->|Eksekusi Worker CPU| G
+    G -->|Ekstrak Alpha RGBA 32-bit| D
+    D -->|Stream Data URL PNG| C
+    C -->|Response JSON| B
     B -->|Pratinjau Checkerboard & Unduh| A
 ```
 
@@ -71,12 +85,12 @@ flowchart LR
 
 ```text
 rembg/
-├── app.py                     # Entry point backend Gradio & API ZeroGPU
+├── app.py                     # Entry point backend Gradio, API ZeroGPU & CPU Fallback
 ├── requirements.txt           # Dependensi Python (rembg, gradio, spaces, pillow)
 ├── README.md                  # Dokumentasi proyek & konfigurasi HF Space
 ├── DESIGN.md                  # Panduan desain Neubrutalism (warna, border, tipografi)
 ├── docs/
-│   └── screenshots/           # Tangkapan layar dokumentasi
+│   └── screenshots/           # Tangkapan layar dokumentasi (hero, slider, workspace)
 └── frontend/                  # Aplikasi web Next.js 14
     ├── package.json
     ├── next.config.js
@@ -97,9 +111,12 @@ rembg/
         │       ├── remove-bg/      # Handler pemrosesan utama + Turnstile
         │       └── demo-remove-bg/ # Handler live demo sampel
         └── lib/
-            ├── analytics.js   # Dispatcher telemetri aman privasi
-            ├── rate-limit.js  # Sliding-window rate limiter
-            └── turnstile.js   # Verifikator server-side Cloudflare Turnstile
+            ├── analytics.js        # Dispatcher telemetri aman privasi
+            ├── demo-data.js        # Data URI gambar referensi 512x512 ter-embed
+            ├── hf-inference.js     # Klien Hugging Face, token rotation, IP forwarding, failover CPU
+            ├── hf-inference.test.js# Pengujian unit modul inferensi
+            ├── rate-limit.js       # Sliding-window rate limiter
+            └── turnstile.js        # Verifikator server-side Cloudflare Turnstile
 ```
 
 ---
@@ -152,6 +169,8 @@ npm test
 |---|---|---|
 | `NEXT_PUBLIC_SITE_URL` | Domain kanonikal untuk sitemap dan SEO | `https://rembg.vercel.app` |
 | `NEXT_PUBLIC_HF_SPACE_URL` | Alamat backend Hugging Face ZeroGPU | `https://ilhamdev-rembg.hf.space` |
+| `HF_TOKEN` | Token akun Hugging Face untuk alokasi kuota ZeroGPU resmi | `hf_xxxxxxxxxxxxxxxxxxxxxxxx` |
+| `HF_TOKENS` | Multi-token dipisah koma untuk round-robin/random quota distribution | `hf_token1,hf_token2` |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Site Key Cloudflare Turnstile | Disediakan Cloudflare |
 | `TURNSTILE_SECRET_KEY` | Secret Key Cloudflare Turnstile | Disediakan Cloudflare |
 | `NEXT_PUBLIC_GSC_VERIFICATION` | Token verifikasi Google Search Console (opsional) | `google-site-verification-...` |
