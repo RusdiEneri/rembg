@@ -5,8 +5,7 @@
  * Memanggil HuggingFace ZeroGPU Gradio Space (ilhamdev-rembg) secara langsung.
  */
 
-import fs from 'fs'
-import path from 'path'
+import { DEMO_BEFORE_IMAGE } from '@/lib/demo-data'
 import { checkRateLimit } from '@/lib/rate-limit'
 
 const HF_SPACE_URL = (process.env.NEXT_PUBLIC_HF_SPACE_URL || 'https://ilhamdev-rembg.hf.space').replace(/\/+$/, '')
@@ -37,18 +36,8 @@ export async function POST(request) {
       // Default jika tidak ada body json
     }
 
-    // ── STEP 1: Baca berkas foto referensi dari public/samples ───────────────
-    const samplePath = path.join(process.cwd(), 'public', 'samples', 'background-removal-before.png')
-    if (!fs.existsSync(samplePath)) {
-      return Response.json(
-        { error: 'Berkas contoh background-removal-before.png tidak ditemukan di server' },
-        { status: 404 }
-      )
-    }
-
-    const fileBuffer = fs.readFileSync(samplePath)
-    const base64Data = fileBuffer.toString('base64')
-    const dataUrl = `data:image/png;base64,${base64Data}`
+    // ── STEP 1: Gunakan data URL foto referensi yang ter-embed ───────────────
+    const dataUrl = DEMO_BEFORE_IMAGE
 
     const payload = {
       data: [dataUrl, modelName, alphaMatting],

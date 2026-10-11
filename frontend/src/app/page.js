@@ -4,6 +4,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { Turnstile } from '@marsidev/react-turnstile'
 import { DEFAULT_TEST_SITE_KEY } from '@/lib/turnstile'
 import { trackEvent } from '@/lib/analytics'
+import { DEMO_BEFORE_IMAGE, DEMO_AFTER_IMAGE } from '@/lib/demo-data'
 
 const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || DEFAULT_TEST_SITE_KEY
 
@@ -41,7 +42,7 @@ export default function Home() {
   const [theme, setTheme] = useState('dark')
 
   // State untuk Demo Before / After Preview (Reference Image)
-  const [demoResultUrl, setDemoResultUrl] = useState('/samples/background-removal-after.png')
+  const [demoResultUrl, setDemoResultUrl] = useState(DEMO_AFTER_IMAGE)
   const [demoLoading, setDemoLoading] = useState(false)
   const [demoError, setDemoError] = useState(null)
   const [sliderPos, setSliderPos] = useState(50)
@@ -59,7 +60,7 @@ export default function Home() {
     document.documentElement.setAttribute('data-theme', initial)
 
     const cachedDemo = sessionStorage.getItem('rembg-demo-result')
-    if (cachedDemo) {
+    if (cachedDemo && cachedDemo.startsWith('data:image/')) {
       setDemoResultUrl(cachedDemo)
     }
   }, [])
@@ -96,10 +97,11 @@ export default function Home() {
   }
 
   const handleDownloadDemo = () => {
-    if (!demoResultUrl) return
+    const downloadUrl = demoResultUrl || DEMO_AFTER_IMAGE
+    if (!downloadUrl) return
     trackEvent('cta_click', { action: 'download_demo' })
     const a = document.createElement('a')
-    a.href = demoResultUrl
+    a.href = downloadUrl
     a.download = 'person-cap-nobg.png'
     a.click()
   }
@@ -151,7 +153,7 @@ export default function Home() {
 
   const handleLoadDemoToEditor = useCallback(async () => {
     try {
-      const res = await fetch('/samples/background-removal-before.png')
+      const res = await fetch(DEMO_BEFORE_IMAGE)
       const blob = await res.blob()
       const file = new File([blob], 'person-cap-reference.png', { type: 'image/png' })
       handleFile(file)
@@ -387,7 +389,7 @@ export default function Home() {
               <div className="hero-visual-preview">
                 <div className="visual-preview-box box-original">
                   <img
-                    src="/samples/background-removal-before.png"
+                    src={DEMO_BEFORE_IMAGE}
                     alt="Foto asli contoh referensi person with cap"
                     style={{ width: '100%', height: '110px', objectFit: 'contain' }}
                   />
@@ -395,7 +397,7 @@ export default function Home() {
                 </div>
                 <div className="visual-preview-box box-cutout">
                   <img
-                    src={demoResultUrl || '/samples/background-removal-after.png'}
+                    src={demoResultUrl || DEMO_AFTER_IMAGE}
                     alt="Hasil potongan transparan model BiRefNet Portrait"
                     style={{ width: '100%', height: '110px', objectFit: 'contain' }}
                   />
@@ -454,17 +456,11 @@ export default function Home() {
               >
                 {/* Layer After (Background Removed with Transparency Checkerboard) */}
                 <div className="demo-layer-after">
-                  {demoResultUrl ? (
-                    <img
-                      src={demoResultUrl}
-                      alt="Hasil potongan transparan model BiRefNet Portrait"
-                      className="demo-img"
-                    />
-                  ) : (
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: '0.875rem' }}>
-                      Menunggu pemrosesan model...
-                    </div>
-                  )}
+                  <img
+                    src={demoResultUrl || DEMO_AFTER_IMAGE}
+                    alt="Hasil potongan transparan model BiRefNet Portrait"
+                    className="demo-img"
+                  />
                 </div>
 
                 {/* Layer Before (Original Image, Clipped to sliderPos %) */}
@@ -475,7 +471,7 @@ export default function Home() {
                   }}
                 >
                   <img
-                    src="/samples/background-removal-before.png"
+                    src={DEMO_BEFORE_IMAGE}
                     alt="Foto asli sebelum pemisahan latar belakang"
                     className="demo-img"
                   />
