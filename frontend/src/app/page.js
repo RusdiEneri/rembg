@@ -388,20 +388,28 @@ export default function Home() {
               </div>
               <div className="hero-visual-preview">
                 <div className="visual-preview-box box-original">
-                  <img
-                    src={DEMO_BEFORE_IMAGE}
-                    alt="Foto asli contoh referensi person with cap"
-                    style={{ width: '100%', height: '110px', objectFit: 'contain' }}
-                  />
-                  <span className="visual-preview-label">Foto Asli</span>
+                  <div className="visual-preview-img-frame">
+                    <img
+                      src={DEMO_BEFORE_IMAGE}
+                      alt="Foto asli contoh referensi person with cap"
+                      className="visual-preview-img"
+                    />
+                  </div>
+                  <div className="visual-preview-footer">
+                    <span className="visual-preview-label">Foto Asli</span>
+                  </div>
                 </div>
                 <div className="visual-preview-box box-cutout">
-                  <img
-                    src={demoResultUrl || DEMO_AFTER_IMAGE}
-                    alt="Hasil potongan transparan model BiRefNet Portrait"
-                    style={{ width: '100%', height: '110px', objectFit: 'contain' }}
-                  />
-                  <span className="visual-preview-label">Tanpa Background</span>
+                  <div className="visual-preview-img-frame">
+                    <img
+                      src={demoResultUrl || DEMO_AFTER_IMAGE}
+                      alt="Hasil potongan transparan model BiRefNet Portrait"
+                      className="visual-preview-img"
+                    />
+                  </div>
+                  <div className="visual-preview-footer">
+                    <span className="visual-preview-label">Tanpa Background</span>
+                  </div>
                 </div>
               </div>
               <div className="hero-visual-footer" style={{ gap: '8px' }}>
