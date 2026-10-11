@@ -42,11 +42,9 @@ def remove_bg_ui(img, model_name, alpha_matting):
     return process_image(img, model_name, alpha_matting)
 
 # ── Handler untuk API Eksternal (Vercel / Next.js) ────────────────────────────
-@spaces.GPU(duration=60)
-def remove_bg_api(img_data, model_name, alpha_matting):
+def process_api_image(img_data, model_name, alpha_matting):
     """
-    Endpoint API untuk Vercel / frontend.
-    Menerima base64 data URL atau objek {path: ...}.
+    Helper untuk memproses base64 data URL atau objek {path: ...}.
     Mengembalikan data:image/png;base64,... secara langsung tanpa perlu file upload terpisah.
     """
     if not img_data:
@@ -74,6 +72,15 @@ def remove_bg_api(img_data, model_name, alpha_matting):
     except Exception as e:
         print(f"[ERROR] API processing failed: {e}")
         raise e
+
+@spaces.GPU(duration=60)
+def remove_bg_api(img_data, model_name, alpha_matting):
+    """Endpoint API GPU untuk Vercel / Next.js (akselerasi ZeroGPU)."""
+    return process_api_image(img_data, model_name, alpha_matting)
+
+def remove_bg_cpu_api(img_data, model_name, alpha_matting):
+    """Endpoint API CPU fallback jika ZeroGPU quota tercapai atau sedang antre."""
+    return process_api_image(img_data, model_name, alpha_matting)
 
 # ── Gradio Blocks Interface ───────────────────────────────────────────────────
 with gr.Blocks(title="Background Remover AI") as demo:
@@ -107,7 +114,7 @@ with gr.Blocks(title="Background Remover AI") as demo:
         outputs=ui_output,
     )
 
-    # Komponen API untuk Vercel / endpoint /gradio_api/call/remove_bg
+    # Komponen API untuk Vercel / endpoint /gradio_api/call/remove_bg (ZeroGPU)
     with gr.Row(visible=False):
         api_input = gr.Textbox(label="Image Base64")
         api_model = gr.Textbox(value="birefnet-portrait", label="Model")
@@ -120,6 +127,21 @@ with gr.Blocks(title="Background Remover AI") as demo:
         inputs=[api_input, api_model, api_alpha],
         outputs=api_output,
         api_name="remove_bg",
+    )
+
+    # Komponen API CPU Fallback / endpoint /gradio_api/call/remove_bg_cpu (Bebas Quota ZeroGPU)
+    with gr.Row(visible=False):
+        cpu_input = gr.Textbox(label="Image Base64 CPU")
+        cpu_model = gr.Textbox(value="birefnet-portrait", label="Model CPU")
+        cpu_alpha = gr.Checkbox(value=False, label="Alpha Matting CPU")
+        cpu_output = gr.Textbox(label="Result Base64 CPU")
+        cpu_btn = gr.Button("API CPU Trigger")
+
+    cpu_btn.click(
+        fn=remove_bg_cpu_api,
+        inputs=[cpu_input, cpu_model, cpu_alpha],
+        outputs=cpu_output,
+        api_name="remove_bg_cpu",
     )
 
 if __name__ == "__main__":

@@ -5,16 +5,17 @@
  * Memanggil HuggingFace ZeroGPU Gradio Space (ilhamdev-rembg) secara langsung.
  */
 
-import { DEMO_BEFORE_IMAGE } from '@/lib/demo-data'
+import { DEMO_BEFORE_IMAGE, DEMO_AFTER_IMAGE } from '@/lib/demo-data'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { executeGradioInference, resolveForwardedIp } from '@/lib/hf-inference'
 
 const HF_SPACE_URL = (process.env.NEXT_PUBLIC_HF_SPACE_URL || 'https://ilhamdev-rembg.hf.space').replace(/\/+$/, '')
 const TIMEOUT_MS = 90_000
 
 export async function POST(request) {
   try {
-    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || request.headers.get('cf-connecting-ip') || '127.0.0.1'
-    const rateLimit = checkRateLimit(`demo-${clientIp}`, 10, 60_000)
+    const forwardedIp = resolveForwardedIp(request)
+    const rateLimit = checkRateLimit(`demo-${forwardedIp}`, 10, 60_000)
     if (!rateLimit.allowed) {
       return Response.json(
         { error: 'Terlalu banyak permintaan demo. Harap tunggu sesaat sebelum mencoba lagi.' },
@@ -39,114 +40,61 @@ export async function POST(request) {
     // ── STEP 1: Gunakan data URL foto referensi yang ter-embed ───────────────
     const dataUrl = DEMO_BEFORE_IMAGE
 
-    const payload = {
-      data: [dataUrl, modelName, alphaMatting],
-    }
-
-    // ── STEP 2: Panggil HuggingFace Gradio Space ────────────────────────────
-    const endpoint = `${HF_SPACE_URL}/gradio_api/call/remove_bg`
-    console.log('[Demo API] Menghubungi endpoint model riil:', endpoint, 'Model:', modelName)
-
-    const callRes = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    })
-
-    if (!callRes.ok) {
-      const errText = await callRes.text()
-      console.error('[Demo API] Call failed:', callRes.status, errText.slice(0, 100))
-      return Response.json(
-        { error: `Gagal memanggil model ZeroGPU: status ${callRes.status}` },
-        { status: 502 }
-      )
-    }
-
-    const { event_id } = await callRes.json()
-    if (!event_id) {
-      return Response.json({ error: 'Tidak ada event_id dari HuggingFace' }, { status: 502 })
-    }
-
-    // ── STEP 3: Baca SSE Stream sampai complete ────────────────────────────
-    const sseUrl = `${endpoint}/${event_id}`
-    const sseController = new AbortController()
-    const sseTimer = setTimeout(() => sseController.abort(), TIMEOUT_MS)
-
-    let sseRes
+    // ── STEP 2: Panggil Hugging Face dengan Token & Fallback ──────────────────
     try {
-      sseRes = await fetch(sseUrl, {
-        headers: { Accept: 'text/event-stream' },
-        signal: sseController.signal,
+      const { result, endpointUsed, isGpu } = await executeGradioInference({
+        spaceUrl: HF_SPACE_URL,
+        dataPayload: [dataUrl, modelName, alphaMatting],
+        clientIp: forwardedIp,
+        timeoutMs: TIMEOUT_MS,
       })
-    } finally {
-      clearTimeout(sseTimer)
-    }
 
-    if (!sseRes.ok) {
-      return Response.json(
-        { error: `Gagal membaca SSE status: ${sseRes.status}` },
-        { status: 502 }
-      )
-    }
-
-    const sseText = await sseRes.text()
-    const lines = sseText.split('\n')
-    let currentEvent = ''
-    let resultOutput = null
-    let errorMsg = null
-
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (trimmed.startsWith('event: ')) {
-        currentEvent = trimmed.slice(7).trim()
-      } else if (trimmed.startsWith('data: ')) {
-        const raw = trimmed.slice(6).trim()
-        if (currentEvent === 'error') {
-          errorMsg = raw
-          break
-        }
-        if (currentEvent === 'complete') {
-          try {
-            const parsed = JSON.parse(raw)
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              resultOutput = parsed[0]
-            }
-          } catch {
-            console.error('[Demo SSE parse error]', raw.slice(0, 100))
+      if (result) {
+        let finalImage = ''
+        if (typeof result === 'string') {
+          finalImage = result.startsWith('data:') ? result : `data:image/png;base64,${result}`
+        } else if (result.url || result.path) {
+          let imgUrl = result.url || result.path
+          if (!imgUrl.startsWith('http') && !imgUrl.startsWith('data:')) {
+            imgUrl = `${HF_SPACE_URL}/gradio_api/file=${imgUrl}`
+          }
+          const fileRes = await fetch(imgUrl)
+          if (fileRes.ok) {
+            const buf = await fileRes.arrayBuffer()
+            const mime = fileRes.headers.get('content-type') || 'image/png'
+            finalImage = `data:${mime};base64,${Buffer.from(buf).toString('base64')}`
           }
         }
+
+        if (finalImage) {
+          return Response.json({
+            success: true,
+            image: finalImage,
+            model: modelName,
+            engine: endpointUsed,
+            isGpu,
+            source: 'real-zerogpu-inference',
+          })
+        }
       }
-    }
-
-    if (errorMsg) {
-      return Response.json({ error: `Gradio inference error: ${errorMsg}` }, { status: 502 })
-    }
-
-    if (!resultOutput) {
-      return Response.json(
-        { error: 'ZeroGPU belum selesai atau sedang antre. Silakan coba kembali.' },
-        { status: 502 }
-      )
-    }
-
-    // ── STEP 4: Format hasil ────────────────────────────────────────────────
-    if (typeof resultOutput === 'string') {
-      const finalImage = resultOutput.startsWith('data:')
-        ? resultOutput
-        : `data:image/png;base64,${resultOutput}`
-
+    } catch (inferErr) {
+      console.warn('[Demo API] External inference exception, falling back to embedded sample:', inferErr.message)
+      // Fallback ke data URL gambar sampel valid yang terverifikasi
       return Response.json({
         success: true,
-        image: finalImage,
+        image: DEMO_AFTER_IMAGE,
         model: modelName,
-        source: 'real-zerogpu-inference',
+        source: 'cached-demo-sample',
+        notice: inferErr.message,
       })
     }
 
-    return Response.json({ error: 'Format output dari HuggingFace tidak dikenali' }, { status: 502 })
+    return Response.json({
+      success: true,
+      image: DEMO_AFTER_IMAGE,
+      model: modelName,
+      source: 'cached-demo-sample',
+    })
   } catch (err) {
     console.error('[Demo API Error]', err)
     return Response.json({ error: err.message || 'Terjadi kesalahan pada server' }, { status: 500 })
