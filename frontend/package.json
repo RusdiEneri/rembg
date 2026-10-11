@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "node --test src/lib/turnstile.test.js"
+    "test": "node --test \"src/lib/*.test.js\""
   },
   "dependencies": {
     "@marsidev/react-turnstile": "^1.6.1",

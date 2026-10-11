@@ -1,15 +1,22 @@
-import { Inter } from 'next/font/google'
+import { Inter, JetBrains_Mono } from 'next/font/google'
 import './globals.css'
 
 const inter = Inter({
   subsets: ['latin'],
   display: 'swap',
+  variable: '--font-sans',
+})
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-mono',
 })
 
 const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || 'https://rembg.vercel.app').replace(/\/+$/, '')
 
 export const viewport = {
-  themeColor: '#09090b',
+  themeColor: '#FFEB3B',
   width: 'device-width',
   initialScale: 1,
 }
@@ -56,6 +63,9 @@ export const metadata = {
       'max-snippet': -1,
     },
   },
+  verification: process.env.NEXT_PUBLIC_GSC_VERIFICATION
+    ? { google: process.env.NEXT_PUBLIC_GSC_VERIFICATION }
+    : undefined,
 }
 
 const jsonLd = {
@@ -111,7 +121,7 @@ export default function RootLayout({ children }) {
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
       </head>
-      <body className={inter.className}>{children}</body>
+      <body className={`${inter.variable} ${jetbrainsMono.variable}`}>{children}</body>
     </html>
   )
 }

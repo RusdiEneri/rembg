@@ -6,20 +6,43 @@
  */
 
 import { verifyTurnstileToken } from '@/lib/turnstile'
+import { checkRateLimit } from '@/lib/rate-limit'
 
 const HF_SPACE_URL = (process.env.NEXT_PUBLIC_HF_SPACE_URL || 'https://ilhamdev-rembg.hf.space').replace(/\/+$/, '')
 const TIMEOUT_MS = 90_000 // 90 detik untuk toleransi ZeroGPU cold start
+const MAX_FILE_SIZE = 20 * 1024 * 1024 // 20MB
+const ALLOWED_MODELS = [
+  'birefnet-portrait',
+  'birefnet-general',
+  'isnet-general-use',
+  'isnet-anime',
+  'u2net',
+  'u2net_human_seg',
+]
 
 export async function POST(request) {
   try {
+    // ── STEP 0: Identifikasi IP & Rate Limiting ────────────────────────────
+    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || request.headers.get('cf-connecting-ip') || '127.0.0.1'
+    const rateLimit = checkRateLimit(clientIp, 15, 60_000)
+    if (!rateLimit.allowed) {
+      return Response.json(
+        { error: 'Terlalu banyak permintaan. Harap tunggu sesaat sebelum mencoba lagi.' },
+        {
+          status: 429,
+          headers: { 'Retry-After': Math.ceil(rateLimit.resetMs / 1000).toString() },
+        }
+      )
+    }
+
     const formData = await request.formData()
     const imageFile = formData.get('image')
-    const modelName = formData.get('model_name') || 'birefnet-portrait'
+    const rawModelName = formData.get('model_name') || 'birefnet-portrait'
+    const modelName = ALLOWED_MODELS.includes(rawModelName) ? rawModelName : 'birefnet-portrait'
     const alphaMatting = formData.get('alpha_matting') === 'true'
     const turnstileToken = formData.get('turnstile_token')
 
-    // ── STEP 0: Verifikasi Keamanan Cloudflare Turnstile ──────────────────
-    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || request.headers.get('cf-connecting-ip') || undefined
+    // ── STEP 1: Verifikasi Keamanan Cloudflare Turnstile ──────────────────
     const turnstileVerification = await verifyTurnstileToken({
       token: turnstileToken,
       remoteIp: clientIp,
@@ -32,14 +55,22 @@ export async function POST(request) {
       )
     }
 
-    if (!imageFile) {
-      return Response.json({ error: 'Tidak ada file gambar yang dikirim' }, { status: 400 })
+    if (!imageFile || typeof imageFile.arrayBuffer !== 'function') {
+      return Response.json({ error: 'Tidak ada file gambar yang valid dikirim' }, { status: 400 })
     }
 
-    // ── STEP 1: Konversi file gambar ke Base64 Data URL ────────────────────
+    if (imageFile.size > MAX_FILE_SIZE) {
+      return Response.json({ error: 'Ukuran file gambar melebihi batas maksimum 20MB' }, { status: 400 })
+    }
+
+    const mimeType = imageFile.type || 'image/png'
+    if (!mimeType.startsWith('image/')) {
+      return Response.json({ error: 'Format berkas tidak didukung. Harap unggah gambar JPG, PNG, atau WEBP.' }, { status: 400 })
+    }
+
+    // ── STEP 2: Konversi file gambar ke Base64 Data URL ────────────────────
     const arrayBuffer = await imageFile.arrayBuffer()
     const base64 = Buffer.from(arrayBuffer).toString('base64')
-    const mimeType = imageFile.type || 'image/png'
     const dataUrl = `data:${mimeType};base64,${base64}`
 
     const payload = {

@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { Turnstile } from '@marsidev/react-turnstile'
 import { DEFAULT_TEST_SITE_KEY } from '@/lib/turnstile'
+import { trackEvent } from '@/lib/analytics'
 
 const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || DEFAULT_TEST_SITE_KEY
 
@@ -39,15 +40,28 @@ export default function Home() {
   const [viewMode, setViewMode] = useState('result') // 'result' | 'original'
   const [theme, setTheme] = useState('dark')
 
+  // State untuk Demo Before / After Preview (Reference Image)
+  const [demoResultUrl, setDemoResultUrl] = useState('/samples/background-removal-after.png')
+  const [demoLoading, setDemoLoading] = useState(false)
+  const [demoError, setDemoError] = useState(null)
+  const [sliderPos, setSliderPos] = useState(50)
+  const [isDraggingSlider, setIsDraggingSlider] = useState(false)
+  const sliderFrameRef = useRef(null)
+
   const fileInputRef = useRef(null)
   const turnstileRef = useRef(null)
 
-  // Inisialisasi tema tampilan
+  // Inisialisasi tema tampilan dan cache demo
   useEffect(() => {
     const saved = localStorage.getItem('rembg-theme')
     const initial = saved || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
     setTheme(initial)
     document.documentElement.setAttribute('data-theme', initial)
+
+    const cachedDemo = sessionStorage.getItem('rembg-demo-result')
+    if (cachedDemo) {
+      setDemoResultUrl(cachedDemo)
+    }
   }, [])
 
   const toggleTheme = () => {
@@ -55,6 +69,61 @@ export default function Home() {
     setTheme(nextTheme)
     document.documentElement.setAttribute('data-theme', nextTheme)
     localStorage.setItem('rembg-theme', nextTheme)
+  }
+
+  const handleProcessDemo = async () => {
+    setDemoLoading(true)
+    setDemoError(null)
+    try {
+      const res = await fetch('/api/demo-remove-bg', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model_name: 'birefnet-portrait' }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Gagal memproses gambar contoh')
+      }
+      setDemoResultUrl(data.image)
+      sessionStorage.setItem('rembg-demo-result', data.image)
+      trackEvent('remove_bg_demo_success', { model: 'birefnet-portrait' })
+    } catch (err) {
+      setDemoError(err.message)
+      trackEvent('remove_bg_demo_error', { error: err.message })
+    } finally {
+      setDemoLoading(false)
+    }
+  }
+
+  const handleDownloadDemo = () => {
+    if (!demoResultUrl) return
+    trackEvent('cta_click', { action: 'download_demo' })
+    const a = document.createElement('a')
+    a.href = demoResultUrl
+    a.download = 'person-cap-nobg.png'
+    a.click()
+  }
+
+  const updateSliderPosition = (clientX) => {
+    if (!sliderFrameRef.current) return
+    const rect = sliderFrameRef.current.getBoundingClientRect()
+    const x = clientX - rect.left
+    const pct = Math.max(0, Math.min(100, (x / rect.width) * 100))
+    setSliderPos(Math.round(pct))
+  }
+
+  const handlePointerDown = (e) => {
+    setIsDraggingSlider(true)
+    updateSliderPosition(e.clientX)
+  }
+
+  const handlePointerMove = (e) => {
+    if (!isDraggingSlider) return
+    updateSliderPosition(e.clientX)
+  }
+
+  const handlePointerUp = () => {
+    setIsDraggingSlider(false)
   }
 
   const handleFile = useCallback((file) => {
@@ -79,6 +148,19 @@ export default function Home() {
     }
     img.src = url
   }, [])
+
+  const handleLoadDemoToEditor = useCallback(async () => {
+    try {
+      const res = await fetch('/samples/background-removal-before.png')
+      const blob = await res.blob()
+      const file = new File([blob], 'person-cap-reference.png', { type: 'image/png' })
+      handleFile(file)
+      const mainCard = document.querySelector('.main-card')
+      if (mainCard) mainCard.scrollIntoView({ behavior: 'smooth' })
+    } catch (err) {
+      setError('Gagal memuat foto contoh: ' + err.message)
+    }
+  }, [handleFile])
 
   // Dukungan paste gambar dari clipboard
   useEffect(() => {
@@ -162,9 +244,17 @@ export default function Home() {
       setProgress(100)
       setResultUrl(data.image)
       setViewMode('result')
+      trackEvent('remove_bg_success', {
+        model,
+        file_size_kb: Math.round((imageFile?.size || 0) / 1024),
+      })
     } catch (err) {
       clearInterval(progressInterval)
       setError(err.message)
+      trackEvent('remove_bg_error', {
+        model,
+        error: err.message,
+      })
     } finally {
       setLoading(false)
       setTimeout(() => setProgress(0), 1000)
@@ -188,6 +278,7 @@ export default function Home() {
 
   const handleDownload = () => {
     if (!resultUrl) return
+    trackEvent('cta_click', { action: 'download_result', model })
     const a = document.createElement('a')
     a.href = resultUrl
     const baseName = imageFile?.name?.replace(/\.[^.]+$/, '') || 'hasil'
@@ -203,7 +294,7 @@ export default function Home() {
           <div className="header-inner">
             <a className="logo" href="/" aria-label="RemBG Beranda">
               <span className="logo-badge" aria-hidden="true">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="6" cy="6" r="3"/>
                   <circle cx="6" cy="18" r="3"/>
                   <line x1="20" y1="4" x2="8.12" y2="15.88"/>
@@ -211,7 +302,10 @@ export default function Home() {
                   <line x1="8.12" y1="8.12" x2="12" y2="12"/>
                 </svg>
               </span>
-              <span className="logo-text">RemBG</span>
+              <div className="logo-title-group">
+                <span className="logo-text">RemBG</span>
+                <span className="logo-sub">AI CUTOUT</span>
+              </div>
             </a>
             <div className="header-meta">
               <button
@@ -248,7 +342,7 @@ export default function Home() {
                 className="hf-link"
               >
                 HF Space
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
                   <polyline points="15 3 21 3 21 9"/>
                   <line x1="10" y1="14" x2="21" y2="3"/>
@@ -259,13 +353,282 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Hero */}
+      {/* Hero: Split-Screen per DESIGN.md */}
       <section className="hero">
         <div className="container">
-          <h1>Pemisah Latar Belakang Foto</h1>
-          <p className="hero-desc">
-            Pemisahan subjek foto otomatis menggunakan model segmentasi BiRefNet dan ISNet. Hasil transparan resolusi penuh dalam format PNG.
-          </p>
+          <div className="hero-split-grid">
+            <div className="hero-content">
+              <div className="hero-tag-badge">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                </svg>
+                Segmentasi AI Otomatis
+              </div>
+              <h1 className="hero-title">Pemisah Latar Belakang Foto</h1>
+              <p className="hero-desc">
+                Pisahkan subjek foto menjadi format PNG transparan secara cepat menggunakan model BiRefNet dan ISNet. Resolusi penuh tanpa kompresi, aman, dan siap pakai.
+              </p>
+              <div className="hero-feature-chips">
+                <span className="feature-chip chip-yellow">PNG Transparan RGBA</span>
+                <span className="feature-chip chip-blue">BiRefNet &amp; ISNet</span>
+                <span className="feature-chip chip-red">ZeroGPU Accelerated</span>
+              </div>
+            </div>
+
+            <div className="hero-visual-card">
+              <div className="hero-visual-header">
+                <div className="hero-visual-dots">
+                  <span className="dot dot-red" />
+                  <span className="dot dot-yellow" />
+                  <span className="dot dot-blue" />
+                </div>
+                <span className="hero-visual-title">HASIL MODEL NYATA</span>
+              </div>
+              <div className="hero-visual-preview">
+                <div className="visual-preview-box box-original">
+                  <img
+                    src="/samples/background-removal-before.png"
+                    alt="Foto asli contoh referensi person with cap"
+                    style={{ width: '100%', height: '110px', objectFit: 'contain' }}
+                  />
+                  <span className="visual-preview-label">Foto Asli</span>
+                </div>
+                <div className="visual-preview-box box-cutout">
+                  <img
+                    src={demoResultUrl || '/samples/background-removal-after.png'}
+                    alt="Hasil potongan transparan model BiRefNet Portrait"
+                    style={{ width: '100%', height: '110px', objectFit: 'contain' }}
+                  />
+                  <span className="visual-preview-label">Tanpa Background</span>
+                </div>
+              </div>
+              <div className="hero-visual-footer" style={{ gap: '8px' }}>
+                <a
+                  href="#demo-preview-section"
+                  style={{ color: '#000000', textDecoration: 'none', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '4px' }}
+                >
+                  Buka Slider Interaktif ↓
+                </a>
+                <span>BiRefNet Portrait</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Interactive Before/After Preview Slider Section (MISSION REQUIREMENT) */}
+      <section className="demo-section" id="demo-preview-section">
+        <div className="container">
+          <div className="demo-card">
+            <div className="demo-header">
+              <div className="demo-header-info">
+                <div className="demo-tag">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                  </svg>
+                  Perbandingan Interaktif
+                </div>
+                <h2 className="demo-title">Pratinjau Nyata AI: Sebelum &amp; Sesudah Pemisahan</h2>
+                <p className="demo-desc">
+                  Uji coba langsung kemampuan segmentasi model <strong>BiRefNet Portrait</strong> menggunakan foto referensi asli. Geser pembatas horizontal untuk membandingkan foto asli dengan hasil potongan transparan riil tanpa rekayasa.
+                </p>
+              </div>
+
+              <div className="demo-status-pill pill-ready">
+                <span className="dot dot-yellow" />
+                Model: BiRefNet Portrait (ZeroGPU)
+              </div>
+            </div>
+
+            <div className="demo-stage">
+              {/* Slider Frame */}
+              <div
+                ref={sliderFrameRef}
+                className="demo-slider-frame"
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onPointerLeave={handlePointerUp}
+                role="region"
+                aria-label="Area perbandingan foto asli dan hasil potongan AI"
+              >
+                {/* Layer After (Background Removed with Transparency Checkerboard) */}
+                <div className="demo-layer-after">
+                  {demoResultUrl ? (
+                    <img
+                      src={demoResultUrl}
+                      alt="Hasil potongan transparan model BiRefNet Portrait"
+                      className="demo-img"
+                    />
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: '0.875rem' }}>
+                      Menunggu pemrosesan model...
+                    </div>
+                  )}
+                </div>
+
+                {/* Layer Before (Original Image, Clipped to sliderPos %) */}
+                <div
+                  className="demo-layer-before"
+                  style={{
+                    clipPath: `polygon(0 0, ${sliderPos}% 0, ${sliderPos}% 100%, 0 100%)`,
+                  }}
+                >
+                  <img
+                    src="/samples/background-removal-before.png"
+                    alt="Foto asli sebelum pemisahan latar belakang"
+                    className="demo-img"
+                  />
+                </div>
+
+                {/* Badges inside frame */}
+                <span className="demo-badge-floating demo-badge-before">
+                  Foto Asli ({sliderPos}%)
+                </span>
+                <span className="demo-badge-floating demo-badge-after">
+                  Hasil AI ({100 - sliderPos}%)
+                </span>
+
+                {/* Vertical Divider Line & Draggable Handle */}
+                <div
+                  className="demo-divider"
+                  style={{ left: `${sliderPos}%` }}
+                >
+                  <div
+                    className="demo-handle"
+                    title="Tarik ke kiri atau kanan untuk membandingkan"
+                    aria-hidden="true"
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="15 18 9 12 15 6" />
+                    </svg>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: '-10px' }}>
+                      <polyline points="9 18 15 12 9 6" />
+                    </svg>
+                  </div>
+                </div>
+
+                {/* Accessible range input for screen readers and keyboard navigation */}
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={sliderPos}
+                  onChange={(e) => setSliderPos(Number(e.target.value))}
+                  className="demo-range-input"
+                  aria-label="Penggeser perbandingan sebelum dan sesudah pemisahan latar belakang"
+                />
+              </div>
+
+              {/* Quick Presets */}
+              <div className="demo-quick-bar" role="group" aria-label="Preset posisi perbandingan">
+                <button
+                  type="button"
+                  className={`demo-quick-btn ${sliderPos === 100 ? 'active' : ''}`}
+                  onClick={() => setSliderPos(100)}
+                >
+                  Foto Asli Penuh (100%)
+                </button>
+                <button
+                  type="button"
+                  className={`demo-quick-btn ${sliderPos === 50 ? 'active' : ''}`}
+                  onClick={() => setSliderPos(50)}
+                >
+                  Bandingkan Imbang (50%)
+                </button>
+                <button
+                  type="button"
+                  className={`demo-quick-btn ${sliderPos === 0 ? 'active' : ''}`}
+                  onClick={() => setSliderPos(0)}
+                >
+                  Hasil AI Penuh (0%)
+                </button>
+              </div>
+
+              {/* Progress and Error States */}
+              {demoLoading && (
+                <div className="progress-wrapper" style={{ width: '100%', maxWidth: '520px' }}>
+                  <div className="progress-header">
+                    <span>Menjalankan inferensi model BiRefNet di Hugging Face ZeroGPU...</span>
+                  </div>
+                  <div className="progress-track" role="progressbar" aria-busy="true">
+                    <div className="progress-bar-fill" style={{ width: '100%' }} />
+                  </div>
+                </div>
+              )}
+
+              {demoError && (
+                <div className="error-banner" style={{ width: '100%', maxWidth: '520px' }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                  <span>{demoError}</span>
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="demo-actions">
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={handleProcessDemo}
+                  disabled={demoLoading}
+                  style={{ minWidth: '220px' }}
+                >
+                  {demoLoading ? (
+                    <>
+                      <span className="spinner-icon" aria-hidden="true" />
+                      Memproses ZeroGPU...
+                    </>
+                  ) : (
+                    <>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <polyline points="23 4 23 10 17 10" />
+                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                      </svg>
+                      {demoResultUrl ? 'Proses Ulang (Live ZeroGPU)' : 'Hapus Background dengan AI'}
+                    </>
+                  )}
+                </button>
+
+                {demoResultUrl && (
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={handleDownloadDemo}
+                    title="Unduh berkas PNG transparan hasil model AI"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    Unduh PNG Transparan
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={handleLoadDemoToEditor}
+                  title="Buka foto contoh ini di formulir upload bawah untuk mencoba model segmentasi lain"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                    <circle cx="8.5" cy="8.5" r="1.5" />
+                    <polyline points="21 15 16 10 5 21" />
+                  </svg>
+                  Gunakan di Editor Utama ↓
+                </button>
+              </div>
+
+              <span className="demo-helper-note">
+                Tekan tombol panah keyboard atau geser tuas pembatas untuk membandingkan transparansi piksel.
+              </span>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -347,6 +710,17 @@ export default function Home() {
                   <div className="dropzone-hint">
                     Format JPG, PNG, atau WEBP hingga 20MB. Bisa juga tempel langsung (Ctrl+V).
                   </div>
+                  <button
+                    type="button"
+                    className="btn-ghost-small"
+                    style={{ marginTop: '8px' }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleLoadDemoToEditor()
+                    }}
+                  >
+                    Atau Coba Foto Contoh (Person with Cap)
+                  </button>
                 </div>
               </div>
             ) : (
@@ -626,29 +1000,91 @@ export default function Home() {
             </div>
           )}
 
-          {/* Informasi Teknis & Spesifikasi Model */}
+          {/* Informasi Teknis & Spesifikasi Model: Zig-Zag Alternating Layout per DESIGN.md */}
           <section className="info-section">
-            <div className="info-grid">
-              <article className="info-card">
-                <h2>Karakteristik Model</h2>
-                <ul className="model-list">
-                  <li><strong>BiRefNet Portrait:</strong> Optimal untuk potret manusia, mendeteksi lekuk pakaian dan helai rambut secara halus.</li>
-                  <li><strong>BiRefNet General:</strong> Optimal untuk foto produk, kemasan dagang, dan objek benda padat.</li>
-                  <li><strong>ISNet General:</strong> Inferensi cepat dengan batas tepi yang tajam untuk berbagai subjek umum.</li>
-                  <li><strong>ISNet Anime:</strong> Dikhususkan untuk ilustrasi 2D, karakter kartun, anime, dan grafik vektor.</li>
-                  <li><strong>U2Net Standard:</strong> Model segmentasi klasik dengan stabilitas tinggi pada berbagai tipe objek.</li>
-                  <li><strong>U2Net Human:</strong> Segmentasi figur manusia ringan untuk kebutuhan pemrosesan cepat.</li>
-                </ul>
-              </article>
+            <div className="section-headline-group">
+              <span className="section-tag">Spesifikasi Sistem</span>
+              <h2>Karakteristik &amp; Arsitektur Pemrosesan</h2>
+            </div>
 
-              <article className="info-card">
-                <h2>Format & Pemrosesan</h2>
-                <ul className="model-list">
-                  <li><strong>Format Masukan:</strong> Mendukung file JPG, JPEG, PNG, dan WEBP dengan ukuran hingga 20MB.</li>
-                  <li><strong>Format Keluaran:</strong> Format PNG dengan kanal alpha transparan penuh tanpa penurunan resolusi dimensi gambar.</li>
-                  <li><strong>Privasi Data:</strong> Berkas gambar diproses sementara di memori inferensi Hugging Face ZeroGPU dan tidak disimpan di server.</li>
-                </ul>
-              </article>
+            <div className="zigzag-container">
+              {/* Row 1: Model Segmentasi (Text on left, Spec highlight on right) */}
+              <div className="zigzag-row">
+                <article className="info-card">
+                  <div>
+                    <div className="info-card-header">
+                      <span className="info-card-badge badge-yellow">Katalog Model</span>
+                      <h2>Karakteristik Model AI</h2>
+                    </div>
+                    <ul className="model-list">
+                      <li className="model-item"><strong>BiRefNet Portrait:</strong> Optimal untuk potret manusia, mendeteksi lekuk pakaian dan helai rambut halus.</li>
+                      <li className="model-item"><strong>BiRefNet General:</strong> Optimal untuk foto produk, kemasan dagang, dan benda padat.</li>
+                      <li className="model-item"><strong>ISNet General:</strong> Inferensi cepat dengan batas tepi tajam untuk berbagai subjek umum.</li>
+                      <li className="model-item"><strong>ISNet Anime:</strong> Dikhususkan untuk ilustrasi 2D, karakter kartun, anime, dan grafik vektor.</li>
+                      <li className="model-item"><strong>U2Net Standard:</strong> Model segmentasi klasik dengan stabilitas tinggi pada aneka tipe objek.</li>
+                      <li className="model-item"><strong>U2Net Human:</strong> Segmentasi figur manusia ringan untuk kebutuhan pemrosesan cepat.</li>
+                    </ul>
+                  </div>
+                </article>
+
+                <aside className="spec-highlight-card" aria-label="Ringkasan Kapabilitas Model">
+                  <div>
+                    <span className="info-card-badge badge-yellow" style={{ background: '#000000', color: '#FFEB3B' }}>Kinerja Inferensi</span>
+                    <h3 className="spec-highlight-title" style={{ marginTop: '12px' }}>Segmentasi Birefnet Tingkat Lanjut</h3>
+                    <p style={{ marginTop: '8px', fontSize: '0.875rem' }}>
+                      Algoritma BiRefNet memetakan peta kedalaman bilateral resolusi tinggi untuk memisahkan latar belakang tanpa kehilangan detail rambut dan batas tepi tipis.
+                    </p>
+                  </div>
+                  <div className="spec-stat-grid">
+                    <div className="spec-stat-box">
+                      <span className="spec-stat-val">6 Model</span>
+                      <span className="spec-stat-label">Pilihan Segmentasi</span>
+                    </div>
+                    <div className="spec-stat-box">
+                      <span className="spec-stat-val">20 MB</span>
+                      <span className="spec-stat-label">Maksimal Berkas</span>
+                    </div>
+                  </div>
+                </aside>
+              </div>
+
+              {/* Row 2: Format & Privasi Data (Spec highlight on left, Text on right - ZIG ZAG) */}
+              <div className="zigzag-row">
+                <aside className="spec-highlight-card card-blue" aria-label="Keamanan dan Format">
+                  <div>
+                    <span className="info-card-badge badge-blue" style={{ background: '#000000', color: '#2196F3' }}>Standar Privasi</span>
+                    <h3 className="spec-highlight-title" style={{ marginTop: '12px' }}>ZeroGPU Ephemeral Processing</h3>
+                    <p style={{ marginTop: '8px', fontSize: '0.875rem' }}>
+                      Berkas gambar dieksekusi langsung di memori GPU terisolasi dan dihapus seketika setelah keluaran PNG dikirimkan. Tidak ada penyimpanan permanen di server.
+                    </p>
+                  </div>
+                  <div className="spec-stat-grid">
+                    <div className="spec-stat-box">
+                      <span className="spec-stat-val">32-Bit</span>
+                      <span className="spec-stat-label">PNG Kanal RGBA</span>
+                    </div>
+                    <div className="spec-stat-box">
+                      <span className="spec-stat-val">100%</span>
+                      <span className="spec-stat-label">Dimensi Asli Utuh</span>
+                    </div>
+                  </div>
+                </aside>
+
+                <article className="info-card">
+                  <div>
+                    <div className="info-card-header">
+                      <span className="info-card-badge badge-red">Format &amp; Keamanan</span>
+                      <h2>Format &amp; Integritas Data</h2>
+                    </div>
+                    <ul className="model-list">
+                      <li className="model-item"><strong>Format Masukan:</strong> Mendukung berkas JPG, JPEG, PNG, dan WEBP hingga ukuran 20MB.</li>
+                      <li className="model-item"><strong>Format Keluaran:</strong> Format PNG dengan kanal alpha transparan penuh tanpa penurunan resolusi dimensi gambar asli.</li>
+                      <li className="model-item"><strong>Privasi Pengguna:</strong> Seluruh pemrosesan inferensi berjalan sementara di infrastruktur Hugging Face ZeroGPU tanpa pencatatan log konten gambar.</li>
+                      <li className="model-item"><strong>Perlindungan Bot:</strong> Dilindungi oleh Cloudflare Turnstile tanpa captcha yang mengganggu kenyamanan pengguna.</li>
+                    </ul>
+                  </div>
+                </article>
+              </div>
             </div>
           </section>
         </div>
