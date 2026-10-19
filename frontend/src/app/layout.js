@@ -13,7 +13,7 @@ const jetbrainsMono = JetBrains_Mono({
   variable: '--font-mono',
 })
 
-const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || 'https://rembg.vercel.app').replace(/\/+$/, '')
+const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || 'https://rembg.mangrusdi.my.id').replace(/\/+$/, '')
 
 export const viewport = {
   themeColor: '#FFEB3B',
@@ -43,7 +43,7 @@ export const metadata = {
     title: 'RemBG: Pemotong Latar Belakang Foto',
     description: 'Pisahkan latar belakang foto menjadi format PNG transparan secara cepat menggunakan model BiRefNet dan ISNet.',
     url: SITE_URL,
-    siteName: 'RemBG',
+    siteName: 'RemBG — AI Background Remover',
     locale: 'id_ID',
     type: 'website',
   },
@@ -71,6 +71,14 @@ export const metadata = {
 const jsonLd = {
   '@context': 'https://schema.org',
   '@graph': [
+    {
+      '@type': 'WebSite',
+      '@id': `${SITE_URL}/#website`,
+      name: 'RemBG — AI Background Remover',
+      alternateName: ['RemBG', 'AI Background Remover', 'rembg.mangrusdi.my.id'],
+      url: SITE_URL,
+      inLanguage: 'id-ID',
+    },
     {
       '@type': 'WebApplication',
       '@id': `${SITE_URL}/#app`,
